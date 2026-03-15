@@ -1,4 +1,5 @@
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 from mrsq import mrsq
 from factors_em import factors_em
@@ -36,4 +37,7 @@ transformed_df = pd.DataFrame(x2, columns=series_names)
 
 print((compute_NA(transformed_df) == 0).all())
 
-transformed_df.to_csv('data/2026-02-MD_processed.csv')
+scaler = StandardScaler()
+scaled_data = pd.DataFrame(scaler.fit_transform(transformed_df), columns=series_names)
+
+scaled_data.to_csv('data/2026-02-MD_processed.csv')
