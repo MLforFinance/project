@@ -1,22 +1,74 @@
 import pandas as pd
 import numpy as np
+import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 from sklearn.preprocessing import normalize
 
 
-def modified_Kmeans(data:pd.DataFrame, r = 4):
-    modelL2 = KMeans(n_clusters = 2)
-    predL2 = modelL2.fit_predict(data)
-    A = data[predL2 == 1]
-    B = data[predL2 == 0]
+def modified_KMeans(data: pd.DataFrame, r: int = 5):
+    model_l2 = KMeans(n_clusters=2, n_init='auto')
+    pred_l2 = model_l2.fit_predict(data)
 
-    data_cosine = A.copy() if A.shape[0] < B.shape[0] else B.copy()
-    data_cosine = normalize(data_cosine)
+    mask_1 = (pred_l2 == 1)
+    count_1 = np.sum(mask_1)
+    count_0 = len(data) - count_1
 
-    modelCosine = KMeans(n_clusters=r)
-    predCos = modelCosine.fit_predict(data_cosine)
+    if count_0 > count_1:
+        minority_mask = mask_1
+        majority_mask = ~mask_1
+    else:
+        minority_mask = ~mask_1
+        majority_mask = mask_1
 
-    return predL2, predCos, modelL2.cluster_centers_, modelCosine.cluster_centers_
+    final_regimes = np.zeros(len(data), dtype=int)
+    
+    data_to_split = data[majority_mask]
+    data_cosine_scaled = normalize(data_to_split)
+
+    model_cosine = KMeans(n_clusters=r, n_init='auto')
+    pred_cos = model_cosine.fit_predict(data_cosine_scaled)
+
+    final_regimes[majority_mask] = pred_cos + 1
+
+    return (
+        final_regimes, 
+        pred_l2, 
+        pred_cos, 
+        model_l2.cluster_centers_, 
+        model_cosine.cluster_centers_
+    )
+
+def plot_kmeans_regimes(data, regimes, recessions=None):
+    df_plot = data.copy()
+    df_plot["sasdate"] = pd.to_datetime(df_plot["sasdate"].iloc[3:], format="%d/%m/%Y")
+    
+    df_plot = df_plot.iloc[len(df_plot) - len(regimes):]
+    
+    df_plot["regime_label"] = regimes
+    
+    fig, ax = plt.subplots(figsize=(15, 5))
+
+    unique_regimes = sorted(df_plot["regime_label"].unique())
+
+    for i, r in enumerate(unique_regimes):
+        mask = (df_plot["regime_label"] == r)
+        ax.scatter(df_plot.loc[mask, "sasdate"], 
+                   df_plot.loc[mask, "regime_label"], 
+                   label=f"Regime {r}", 
+                   s=30, 
+                   alpha=0.7)
+    if recessions:
+        for start, end in recessions:
+            ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), 
+                       color='grey', alpha=0.3, zorder=0)
+
+    ax.set_ylabel('K-Means Regimes')
+    ax.set_xlabel('Date')
+    ax.set_yticks(unique_regimes)
+    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+    
+    plt.tight_layout()
+    plt.show()
 
 
 def cosine_distance(x, y):
@@ -27,7 +79,12 @@ def l2_distance(x, y):
 
 
 if __name__ == "__main__":
-    data = pd.read_csv("data/2026-02-MD_reduced.csv", index_col = 0)
+    reduced_data = pd.read_csv("data/2026-02-MD_reduced.csv", index_col = 0)
+    raw_data = pd.read_csv("data/2026-02-MD.csv")
     
-    predL2, predCos, clustersL2, clustersCos = modified_Kmeans(data)
-    print(predL2, predCos)
+    regimes_pred, predL2, predCos, clustersL2, clustersCos = modified_KMeans(reduced_data)
+
+    plot_kmeans_regimes(raw_data, regimes_pred)
+
+
+    
