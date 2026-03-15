@@ -31,4 +31,5 @@ def optimal_PCA(data: pd.DataFrame, target_variance=0.95):
 
 if __name__ == "__main__":
     data = pd.read_csv("data/2026-02-MD_processed.csv", index_col=0)
-    data, k = optimal_PCA(data)
+    data_pca, k = optimal_PCA(data)
+    pd.DataFrame(data_pca, columns = np.arange(data_pca.shape[1])).to_csv("data/2026-02-MD_reduced.csv")
