@@ -110,33 +110,6 @@ def plot_kmeans_regimes(data, regimes, recessions=None):
     plt.tight_layout()
     plt.show()
 
-def compute_proba_distributions(data: pd.DataFrame, regimes:np.ndarray,
-                                clustersL2:np.ndarray, clustersCos: np.ndarray,
-                                least_freq: list[0,1]):
-    
-    assert data.shape[0] == regimes.shape[0]
-
-    r = len(np.unique(regimes))
-    proba = np.zeros((regimes.shape[0], r))
-    for i in range(data.shape[0]):
-        d = np.zeros((1, r))
-        x = data.iloc[i,:]
-
-        d[0,0] = np.linalg.norm(x - clustersL2[least_freq,:])
-        d[0,1:] = [np.linalg.norm(x - clustersCos[j,:]) for j in range(clustersCos.shape[0])]
-            
-        denominator = np.sum( 1 - d / np.sum(d))
-        proba[i,:] = [(1 - (d[0,j]/np.sum(d))) / denominator for j in range(d.shape[1])]
-
-    return proba
-
-# def cosine_distance(x, y):
-#     return np.dot(x,y) / np.sqrt(np.linalg.norm(x) * np.linalg.norm(y))
-
-# def l2_distance(x, y):
-#     return np.linalg.norm(x-y)
-
-
 if __name__ == "__main__":
     reduced_data = pd.read_csv("data/2026-02-MD_reduced.csv", index_col = 0)
     raw_data = pd.read_csv("data/2026-02-MD.csv")
