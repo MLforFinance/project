@@ -28,7 +28,6 @@ def modified_KMeans(data: pd.DataFrame, r: int = 5):
     labels_cos, centroids_cos, pred_cos = KMeansCosine(data_to_split, k=r, epsilon=1e-4)
 
     final_regimes[majority_mask] = labels_cos + 1
-
     return (
         final_regimes, 
         pred_l2, 
@@ -81,7 +80,6 @@ def KMeansCosine(data: np.ndarray, k: int, epsilon: float = 1e-4):
 
 def plot_kmeans_regimes(data, regimes, recessions=None):
     df_plot = data.copy()
-    df_plot["sasdate"] = pd.to_datetime(df_plot["sasdate"].iloc[3:], format="%d/%m/%Y")
     
     df_plot = df_plot.iloc[len(df_plot) - len(regimes):]
     
@@ -93,7 +91,7 @@ def plot_kmeans_regimes(data, regimes, recessions=None):
 
     for i, r in enumerate(unique_regimes):
         mask = (df_plot["regime_label"] == r)
-        ax.scatter(df_plot.loc[mask, "sasdate"].index, 
+        ax.scatter(df_plot.loc[mask].index, 
                    df_plot.loc[mask, "regime_label"], 
                    label=f"Regime {r}",
                    alpha=0.3)
@@ -110,14 +108,3 @@ def plot_kmeans_regimes(data, regimes, recessions=None):
     plt.tight_layout()
     plt.show()
 
-if __name__ == "__main__":
-    reduced_data = pd.read_csv("data/2026-02-MD_reduced.csv", index_col = 0)
-    raw_data = pd.read_csv("data/2026-02-MD.csv")
-    
-    regimes_pred, predL2, predCos, clustersL2, clustersCos, least_freq = modified_KMeans(reduced_data)
-
-    # proba = compute_proba_distributions(reduced_data, regimes_pred, clustersL2, clustersCos, least_freq)
-    plot_kmeans_regimes(raw_data, regimes_pred)
-
-
-    
