@@ -2,41 +2,82 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
-from sklearn.preprocessing import normalize
 
 
 def modified_KMeans(data: pd.DataFrame, r: int = 5):
-    model_l2 = KMeans(n_clusters=2, n_init='auto')
-    pred_l2 = model_l2.fit_predict(data)
+    model_l2 = KMeans(n_clusters=2, tol = 10**-5)
+    pred_l2 = model_l2.fit_transform(data)
 
-    mask_1 = (pred_l2 == 1)
+    mask_1 = (np.argmin(pred_l2, axis=1) == 1)
     count_1 = np.sum(mask_1)
     count_0 = len(data) - count_1
 
     if count_0 > count_1:
+        index_least_freq = 1
         minority_mask = mask_1
         majority_mask = ~mask_1
     else:
+        index_least_freq = 0
         minority_mask = ~mask_1
         majority_mask = mask_1
 
     final_regimes = np.zeros(len(data), dtype=int)
-    
-    data_to_split = data[majority_mask]
-    data_cosine_scaled = normalize(data_to_split)
+    data_to_split = np.array(data[majority_mask])
 
-    model_cosine = KMeans(n_clusters=r, n_init='auto')
-    pred_cos = model_cosine.fit_predict(data_cosine_scaled)
+    # Custom Kmeans
+    labels_cos, centroids_cos, pred_cos = KMeansCosine(data_to_split, k=r, epsilon=1e-4)
 
-    final_regimes[majority_mask] = pred_cos + 1
+    final_regimes[majority_mask] = labels_cos + 1
 
     return (
         final_regimes, 
         pred_l2, 
         pred_cos, 
         model_l2.cluster_centers_, 
-        model_cosine.cluster_centers_
+        centroids_cos,
+        index_least_freq
     )
+
+
+def KMeansCosine(data: np.ndarray, k: int, epsilon: float = 1e-4):
+    norms = np.linalg.norm(data, axis=1, keepdims=True)
+    normalized_data = data / (norms + 1e-10)
+
+    n, d = normalized_data.shape
+    
+    centroids = np.random.uniform(np.min(normalized_data, axis=0), 
+                                  np.max(normalized_data, axis=0), 
+                                  (k, d))
+    centroids = centroids / (np.linalg.norm(centroids, axis=1, keepdims=True) + 1e-10)
+
+    converged = False
+    labels = np.zeros(n, dtype=int)
+
+    while not converged:
+        dists = 1 - np.dot(normalized_data, centroids.T)
+        labels = np.argmin(dists, axis=1)
+
+        newCentroids = np.zeros_like(centroids)
+
+        # Centroid update
+        for i in range(k):
+            points_in_cluster = normalized_data[labels == i]
+            
+            if len(points_in_cluster) == 0:
+                random_point = normalized_data[np.random.randint(0, n)]
+                newCentroids[i, :] = random_point / (np.linalg.norm(random_point) + 1e-10)
+            else:
+                mean_vec = np.mean(points_in_cluster, axis=0)
+                newCentroids[i, :] = mean_vec / (np.linalg.norm(mean_vec) + 1e-10)
+
+        if (np.abs(newCentroids - centroids) < epsilon).all():
+            converged = True
+        else:
+            centroids = newCentroids
+
+    final_dists = 1 - np.dot(normalized_data, centroids.T)
+    return labels, centroids, final_dists
+
 
 def plot_kmeans_regimes(data, regimes, recessions=None):
     df_plot = data.copy()
@@ -52,11 +93,10 @@ def plot_kmeans_regimes(data, regimes, recessions=None):
 
     for i, r in enumerate(unique_regimes):
         mask = (df_plot["regime_label"] == r)
-        ax.scatter(df_plot.loc[mask, "sasdate"], 
+        ax.scatter(df_plot.loc[mask, "sasdate"].index, 
                    df_plot.loc[mask, "regime_label"], 
-                   label=f"Regime {r}", 
-                   s=30, 
-                   alpha=0.7)
+                   label=f"Regime {r}",
+                   alpha=0.3)
     if recessions:
         for start, end in recessions:
             ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), 
@@ -70,20 +110,40 @@ def plot_kmeans_regimes(data, regimes, recessions=None):
     plt.tight_layout()
     plt.show()
 
+def compute_proba_distributions(data: pd.DataFrame, regimes:np.ndarray,
+                                clustersL2:np.ndarray, clustersCos: np.ndarray,
+                                least_freq: list[0,1]):
+    
+    assert data.shape[0] == regimes.shape[0]
 
-def cosine_distance(x, y):
-    return np.dot(x,y) / np.sqrt(np.linalg.norm(x) * np.linalg.norm(y))
+    r = len(np.unique(regimes))
+    proba = np.zeros((regimes.shape[0], r))
+    for i in range(data.shape[0]):
+        d = np.zeros((1, r))
+        x = data.iloc[i,:]
 
-def l2_distance(x, y):
-    return np.linalg.norm(x-y)
+        d[0,0] = np.linalg.norm(x - clustersL2[least_freq,:])
+        d[0,1:] = [np.linalg.norm(x - clustersCos[j,:]) for j in range(clustersCos.shape[0])]
+            
+        denominator = np.sum( 1 - d / np.sum(d))
+        proba[i,:] = [(1 - (d[0,j]/np.sum(d))) / denominator for j in range(d.shape[1])]
+
+    return proba
+
+# def cosine_distance(x, y):
+#     return np.dot(x,y) / np.sqrt(np.linalg.norm(x) * np.linalg.norm(y))
+
+# def l2_distance(x, y):
+#     return np.linalg.norm(x-y)
 
 
 if __name__ == "__main__":
     reduced_data = pd.read_csv("data/2026-02-MD_reduced.csv", index_col = 0)
     raw_data = pd.read_csv("data/2026-02-MD.csv")
     
-    regimes_pred, predL2, predCos, clustersL2, clustersCos = modified_KMeans(reduced_data)
+    regimes_pred, predL2, predCos, clustersL2, clustersCos, least_freq = modified_KMeans(reduced_data)
 
+    # proba = compute_proba_distributions(reduced_data, regimes_pred, clustersL2, clustersCos, least_freq)
     plot_kmeans_regimes(raw_data, regimes_pred)
 
 
