@@ -4,11 +4,12 @@ import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 
 RANDOM_SEED = 42
-np.random.seed(RANDOM_SEED)
+KMEANS_ITER = 10
 
 
 def modified_KMeans(data: pd.DataFrame, r: int = 5):
-    model_l2 = KMeans(n_clusters=2, tol=10**-5, random_state=RANDOM_SEED)
+    model_l2 = KMeans(n_clusters=2, tol=1e-5,
+                      random_state=RANDOM_SEED, n_init=KMEANS_ITER)
     pred_l2 = model_l2.fit_transform(data)
 
     mask_1 = (np.argmin(pred_l2, axis=1) == 1)
@@ -28,8 +29,8 @@ def modified_KMeans(data: pd.DataFrame, r: int = 5):
     data_to_split = np.array(data[majority_mask])
 
     # Custom Kmeans
-    labels_cos, centroids_cos, pred_cos = KMeansCosine(
-        data_to_split, k=r, epsilon=1e-4)
+    labels_cos, centroids_cos, pred_cos = KMeansCosine_multi(
+        data_to_split, k=r, epsilon=1e-4, n_init=KMEANS_ITER, random_state=RANDOM_SEED)
 
     final_regimes[majority_mask] = labels_cos + 1
     return (
@@ -42,13 +43,39 @@ def modified_KMeans(data: pd.DataFrame, r: int = 5):
     )
 
 
-def KMeansCosine(data: np.ndarray, k: int, epsilon: float = 1e-4):
+def KMeansCosine_multi(data, k, epsilon=1e-4, n_init=10, random_state=None):
+    rng = np.random.default_rng(random_state)
+
+    best_inertia = np.inf
+    best_result = None
+
+    for _ in range(n_init):
+        seed = rng.integers(0, 1e9)
+        print(f"Running KMeansCosine with seed {seed}...")
+
+        labels, centroids, dists = KMeansCosine(
+            data, k, epsilon=epsilon, random_state=seed
+        )
+
+        inertia = np.sum(np.min(dists, axis=1))
+
+        if inertia < best_inertia:
+            best_inertia = inertia
+            best_result = (labels, centroids, dists)
+
+    return best_result
+
+
+def KMeansCosine(data: np.ndarray, k: int, epsilon: float, random_state=None):
+    rng = np.random.default_rng(random_state)
     norms = np.linalg.norm(data, axis=1, keepdims=True)
     normalized_data = data / (norms + 1e-10)
 
     n, d = normalized_data.shape
 
-    indices = np.random.choice(n, k, replace=False)
+    # initialize with random points
+
+    indices = rng.choice(n, k, replace=False)
     centroids = normalized_data[indices]
 
     converged = False
@@ -65,7 +92,7 @@ def KMeansCosine(data: np.ndarray, k: int, epsilon: float = 1e-4):
             points_in_cluster = normalized_data[labels == i]
 
             if len(points_in_cluster) == 0:
-                random_point = normalized_data[np.random.randint(0, n)]
+                random_point = normalized_data[rng.integers(0, n)]
                 newCentroids[i, :] = random_point / \
                     (np.linalg.norm(random_point) + 1e-10)
             else:
