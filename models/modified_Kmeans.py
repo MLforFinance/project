@@ -3,9 +3,12 @@ import numpy as np
 import matplotlib.pyplot as plt
 from sklearn.cluster import KMeans
 
+RANDOM_SEED = 42
+np.random.seed(RANDOM_SEED)
+
 
 def modified_KMeans(data: pd.DataFrame, r: int = 5):
-    model_l2 = KMeans(n_clusters=2, tol=10**-5)
+    model_l2 = KMeans(n_clusters=2, tol=10**-5, random_state=RANDOM_SEED)
     pred_l2 = model_l2.fit_transform(data)
 
     mask_1 = (np.argmin(pred_l2, axis=1) == 1)
