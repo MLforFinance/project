@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from pathlib import Path
 from sklearn.cluster import KMeans
 
 RANDOM_SEED = 42
@@ -12,23 +13,20 @@ def modified_KMeans(data: pd.DataFrame, r: int = 5):
                       random_state=RANDOM_SEED, n_init=KMEANS_ITER)
     pred_l2 = model_l2.fit_transform(data)
 
-    mask_1 = (np.argmin(pred_l2, axis=1) == 1)
+    mask_1 = np.argmin(pred_l2, axis=1) == 1
     count_1 = np.sum(mask_1)
     count_0 = len(data) - count_1
 
     if count_0 > count_1:
         index_least_freq = 1
-        minority_mask = mask_1
         majority_mask = ~mask_1
     else:
         index_least_freq = 0
-        minority_mask = ~mask_1
         majority_mask = mask_1
 
     final_regimes = np.zeros(len(data), dtype=int)
     data_to_split = np.array(data[majority_mask])
 
-    # Custom Kmeans
     labels_cos, centroids_cos, pred_cos = KMeansCosine_multi(
         data_to_split, k=r, epsilon=1e-4, n_init=KMEANS_ITER, random_state=RANDOM_SEED)
 
@@ -39,7 +37,7 @@ def modified_KMeans(data: pd.DataFrame, r: int = 5):
         pred_cos,
         model_l2.cluster_centers_,
         centroids_cos,
-        index_least_freq
+        index_least_freq,
     )
 
 
@@ -73,8 +71,6 @@ def KMeansCosine(data: np.ndarray, k: int, epsilon: float, random_state=None):
 
     n, d = normalized_data.shape
 
-    # initialize with random points
-
     indices = rng.choice(n, k, replace=False)
     centroids = normalized_data[indices]
 
@@ -87,7 +83,6 @@ def KMeansCosine(data: np.ndarray, k: int, epsilon: float, random_state=None):
 
         newCentroids = np.zeros_like(centroids)
 
-        # Centroid update
         for i in range(k):
             points_in_cluster = normalized_data[labels == i]
 
@@ -109,23 +104,22 @@ def KMeansCosine(data: np.ndarray, k: int, epsilon: float, random_state=None):
     return labels, centroids, final_dists
 
 
-def plot_kmeans_regimes(data, regimes, recessions=None):
+def plot_kmeans_regimes(data, regimes, recessions=None, output_path=None, show=False):
     df_plot = data.copy()
-
     df_plot = df_plot.iloc[len(df_plot) - len(regimes):]
-
     df_plot["regime_label"] = regimes
 
     fig, ax = plt.subplots(figsize=(15, 5))
-
     unique_regimes = sorted(df_plot["regime_label"].unique())
 
-    for i, r in enumerate(unique_regimes):
-        mask = (df_plot["regime_label"] == r)
-        ax.scatter(df_plot.loc[mask].index,
-                   df_plot.loc[mask, "regime_label"],
-                   label=f"Regime {r}",
-                   alpha=0.3)
+    for r in unique_regimes:
+        mask = df_plot["regime_label"] == r
+        ax.scatter(
+            df_plot.loc[mask].index,
+            df_plot.loc[mask, "regime_label"],
+            label=f"Regime {r}",
+            alpha=0.3,
+        )
     if recessions:
         for start, end in recessions:
             ax.axvspan(pd.to_datetime(start), pd.to_datetime(end),
@@ -137,4 +131,11 @@ def plot_kmeans_regimes(data, regimes, recessions=None):
     ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
 
     plt.tight_layout()
-    plt.show()
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, format=output_path.suffix.lstrip(
+            '.') or 'svg', bbox_inches='tight')
+    if show:
+        plt.show()
+    plt.close(fig)
