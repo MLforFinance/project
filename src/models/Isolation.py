@@ -2,10 +2,15 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
 
+<<<<<<< Updated upstream:src/models/Isolation.py
 try:
     from .modified_Kmeans import KMeansCosine, plot_kmeans_regimes
 except ImportError:  # pragma: no cover - supports direct script execution
     from modified_Kmeans import KMeansCosine, plot_kmeans_regimes
+=======
+from .modified_Kmeans import KMeansCosine, plot_kmeans_regimes
+
+>>>>>>> Stashed changes:models/Isolation.py
 
 
 def Isolation_KMeans(data: pd.DataFrame, r: int = 5):
