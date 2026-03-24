@@ -9,13 +9,17 @@ KMEANS_ITER = 10
 
 
 def modified_KMeans(data: pd.DataFrame, r: int = 5):
+    data_array = np.asarray(data)
+    l2_norms = np.linalg.norm(data_array, axis=1, keepdims=True)
+
     model_l2 = KMeans(n_clusters=2, tol=1e-5,
                       random_state=RANDOM_SEED, n_init=KMEANS_ITER)
-    pred_l2 = model_l2.fit_transform(data)
+    # The first split is purely radial: cluster on each point's L2 norm.
+    pred_l2 = model_l2.fit_transform(l2_norms)
 
     mask_1 = np.argmin(pred_l2, axis=1) == 1
     count_1 = np.sum(mask_1)
-    count_0 = len(data) - count_1
+    count_0 = len(data_array) - count_1
 
     if count_0 > count_1:
         index_least_freq = 1
@@ -24,8 +28,8 @@ def modified_KMeans(data: pd.DataFrame, r: int = 5):
         index_least_freq = 0
         majority_mask = mask_1
 
-    final_regimes = np.zeros(len(data), dtype=int)
-    data_to_split = np.array(data[majority_mask])
+    final_regimes = np.zeros(len(data_array), dtype=int)
+    data_to_split = data_array[majority_mask]
 
     labels_cos, centroids_cos, pred_cos = KMeansCosine_multi(
         data_to_split, k=r, epsilon=1e-4, n_init=KMEANS_ITER, random_state=RANDOM_SEED)
