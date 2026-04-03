@@ -3,9 +3,9 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 
 try:
-    from .modified_Kmeans import KMeansCosine, plot_kmeans_regimes
+    from .modified_Kmeans import KMeansCosine
 except ImportError:  # pragma: no cover - supports direct script execution
-    from modified_Kmeans import KMeansCosine, plot_kmeans_regimes
+    from modified_Kmeans import KMeansCosine
 
 
 def Isolation_KMeans(data: pd.DataFrame, r: int = 5):
@@ -37,3 +37,22 @@ def Isolation_KMeans(data: pd.DataFrame, r: int = 5):
         centroids_cos,
         index_least_freq,
     )
+
+def Isolation(X:pd.DataFrame,
+              n_estimators:int,
+              contamination = "auto"):
+    
+    model = IsolationForest(
+        n_estimators=n_estimators,
+        contamination = contamination,
+        bootstrap = True
+    )
+
+    pred_iso = model.fit_predict(X)
+
+    regime0 = X[pred_iso == -1]
+    normal = X[pred_iso == 1]
+
+    r = regime0.shape[0]/X.shape[0]
+    
+    return regime0, normal, r

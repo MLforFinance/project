@@ -1,7 +1,5 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
 from sklearn.cluster import KMeans
 
 RANDOM_SEED = 42
@@ -108,38 +106,4 @@ def KMeansCosine(data: np.ndarray, k: int, epsilon: float, random_state=None):
     return labels, centroids, final_dists
 
 
-def plot_kmeans_regimes(data, regimes, recessions=None, output_path=None, show=False):
-    df_plot = data.copy()
-    df_plot = df_plot.iloc[len(df_plot) - len(regimes):]
-    df_plot["regime_label"] = regimes
 
-    fig, ax = plt.subplots(figsize=(15, 5))
-    unique_regimes = sorted(df_plot["regime_label"].unique())
-
-    for r in unique_regimes:
-        mask = df_plot["regime_label"] == r
-        ax.scatter(
-            df_plot.loc[mask].index,
-            df_plot.loc[mask, "regime_label"],
-            label=f"Regime {r}",
-            alpha=0.3,
-        )
-    if recessions:
-        for start, end in recessions:
-            ax.axvspan(pd.to_datetime(start), pd.to_datetime(end),
-                       color='grey', alpha=0.3, zorder=0)
-
-    ax.set_ylabel('K-Means Regimes')
-    ax.set_xlabel('Date')
-    ax.set_yticks(unique_regimes)
-    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-
-    plt.tight_layout()
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        fig.savefig(output_path, format=output_path.suffix.lstrip(
-            '.') or 'svg', bbox_inches='tight')
-    if show:
-        plt.show()
-    plt.close(fig)

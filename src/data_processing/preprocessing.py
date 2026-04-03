@@ -96,6 +96,7 @@ def preprocess_fred_md(
 
     n_missing_after_prepare_missing = int(pd.DataFrame(yt).isna().sum().sum())
     data, n_outliers = remove_outliers(yt)
+
     n_missing_after_remove_outliers = int(pd.DataFrame(data).isna().sum().sum())
 
     _, Fhat, lamhat, ve2, x2 = factors_em(data, kmax_value, jj_value, demean)
