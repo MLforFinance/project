@@ -80,4 +80,5 @@ def derive_backtest_paths(input_csv: Path, output_dir: Path) -> dict[str, Path]:
         "black_litterman_vs_benchmarks": output_dir / f"{stem}_black_litterman_vs_benchmarks.png",
         "ridge_vs_benchmarks": output_dir / f"{stem}_ridge_vs_benchmarks.png",
         "boxplots": output_dir / f"{stem}_control_vs_treatment_boxplots.png",
+        "forecast_mode_comparison": output_dir / f"{stem}_forecast_mode_comparison.png",
     }

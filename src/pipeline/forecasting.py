@@ -7,8 +7,28 @@ from sklearn.linear_model import Ridge
 from .config import BLACK_LITTERMAN_TAU
 
 
-def _regime_weighted_mean(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray) -> pd.Series:
+def regime_weights(probs_next: np.ndarray, forecast_mode: str) -> np.ndarray:
     probs = np.asarray(probs_next, dtype=float)
+    if probs.ndim != 1:
+        raise ValueError("probs_next must be a one-dimensional array.")
+
+    total = probs.sum()
+    if total <= 0:
+        probs = np.ones_like(probs, dtype=float) / len(probs)
+    else:
+        probs = probs / total
+
+    if forecast_mode == "soft":
+        return probs
+    if forecast_mode == "hard":
+        hard = np.zeros_like(probs, dtype=float)
+        hard[int(np.argmax(probs))] = 1.0
+        return hard
+    raise ValueError("forecast_mode must be one of: 'hard', 'soft'.")
+
+
+def _regime_weighted_mean(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray, forecast_mode: str) -> pd.Series:
+    probs = regime_weights(probs_next, forecast_mode)
     weighted_sum = pd.Series(0.0, index=returns_df.columns, dtype=float)
     total_weight = 0.0
 
@@ -26,8 +46,8 @@ def _regime_weighted_mean(returns_df: pd.DataFrame, regimes: pd.Series, probs_ne
     return weighted_sum / total_weight
 
 
-def _regime_weighted_std(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray) -> pd.Series:
-    probs = np.asarray(probs_next, dtype=float)
+def _regime_weighted_std(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray, forecast_mode: str) -> pd.Series:
+    probs = regime_weights(probs_next, forecast_mode)
     weighted_sum = pd.Series(0.0, index=returns_df.columns, dtype=float)
     total_weight = 0.0
 
@@ -45,9 +65,9 @@ def _regime_weighted_std(returns_df: pd.DataFrame, regimes: pd.Series, probs_nex
     return weighted_sum / total_weight
 
 
-def forecast_naive_sharpe(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray) -> pd.Series:
-    mu = _regime_weighted_mean(returns_df, regimes, probs_next)
-    sigma = _regime_weighted_std(returns_df, regimes, probs_next).replace(0, 1e-8)
+def forecast_naive_sharpe(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray, forecast_mode: str = "soft") -> pd.Series:
+    mu = _regime_weighted_mean(returns_df, regimes, probs_next, forecast_mode)
+    sigma = _regime_weighted_std(returns_df, regimes, probs_next, forecast_mode).replace(0, 1e-8)
     return mu / sigma
 
 
@@ -79,16 +99,42 @@ def train_ridge_models(
     return models
 
 
-def predict_ridge(models: dict[int, Ridge], X_t: pd.Series | np.ndarray, probs_next: np.ndarray, n_regimes: int) -> np.ndarray:
+def predict_ridge(
+    models: dict[int, Ridge],
+    X_t: pd.Series | np.ndarray,
+    probs_next: np.ndarray,
+    n_regimes: int,
+    forecast_mode: str = "soft",
+) -> np.ndarray:
     X_values = np.asarray(X_t).reshape(1, -1)
+
+    if -1 in models:
+        return np.asarray(models[-1].predict(X_values)[0])
+
+    weights = regime_weights(probs_next, forecast_mode)
     preds = None
+    total_weight = 0.0
 
     for regime, model in models.items():
+        if regime < 0 or regime >= n_regimes:
+            continue
+        weight = float(weights[regime])
+        if weight <= 0:
+            continue
         pred_regime = model.predict(X_values)[0]
-        weight = 1.0 if regime == -1 else probs_next[regime]
         weighted = weight * pred_regime
         preds = weighted if preds is None else preds + weighted
+        total_weight += weight
 
+    if preds is None or total_weight <= 0:
+        available_regimes = [regime for regime in models if 0 <= regime < n_regimes]
+        if not available_regimes:
+            return np.zeros(X_values.shape[1], dtype=float)
+        fallback_regime = max(available_regimes, key=lambda regime: float(weights[regime]))
+        return np.asarray(models[fallback_regime].predict(X_values)[0])
+
+    if forecast_mode == "soft" and total_weight < 1.0:
+        preds = preds / total_weight
     return np.asarray(preds)
 
 
@@ -97,12 +143,13 @@ def forecast_black_litterman_scores(
     regimes: pd.Series,
     probs_next: np.ndarray,
     tau: float = BLACK_LITTERMAN_TAU,
+    forecast_mode: str = "soft",
 ) -> pd.Series:
     mu_prior = returns_df.mean().to_numpy()
     sigma = returns_df.cov().to_numpy(copy=True)
     sigma += np.eye(len(mu_prior)) * 1e-6
 
-    q_star = _regime_weighted_mean(returns_df, regimes, probs_next).to_numpy()
+    q_star = _regime_weighted_mean(returns_df, regimes, probs_next, forecast_mode).to_numpy()
 
     tau_sigma = tau * sigma
     tau_sigma_inv = np.linalg.pinv(tau_sigma)

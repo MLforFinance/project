@@ -93,22 +93,26 @@ def scale_to_target_vol(returns: pd.DataFrame, target_annual_vol: float = TARGET
     return scaled
 
 
-def strategy_meta(strategy_name: str) -> dict[str, str | int]:
-    family, mode, l_token = strategy_name.rsplit("_", 2)
+def strategy_meta(strategy_name: str, default_forecast_mode: str | None = None) -> dict[str, str | int]:
+    base_name, separator, explicit_forecast_mode = strategy_name.partition("__")
+    family, mode, l_token = base_name.rsplit("_", 2)
     l_value = int(l_token[1:])
     info = MODEL_FAMILIES[family]
+    forecast_mode = explicit_forecast_mode if separator else (default_forecast_mode or "unspecified")
     return {
         "strategy": strategy_name,
         "family": family,
         "mode": mode,
         "l_value": l_value,
+        "forecast_mode": forecast_mode,
         "control_group": info["control_group"],
         "comparison": info["comparison"],
     }
 
 
 def is_strategy_column(column: str) -> bool:
-    return any(column.startswith(family + "_") for family in MODEL_FAMILIES)
+    base_name = column.split("__", 1)[0]
+    return any(base_name.startswith(family + "_") for family in MODEL_FAMILIES)
 
 
 def build_metrics_table(
@@ -116,17 +120,19 @@ def build_metrics_table(
     gross_returns: pd.DataFrame | None = None,
     turnover: pd.DataFrame | None = None,
     transaction_costs: pd.DataFrame | None = None,
+    default_forecast_mode: str | None = None,
 ) -> pd.DataFrame:
     rows = []
     for column in portfolio_returns.columns:
         if is_strategy_column(column):
-            meta = strategy_meta(column)
+            meta = strategy_meta(column, default_forecast_mode=default_forecast_mode)
         else:
             meta = {
                 "strategy": column,
                 "family": column,
                 "mode": "benchmark",
                 "l_value": 0,
+                "forecast_mode": "benchmark",
                 "control_group": "benchmark",
                 "comparison": "benchmark",
             }
@@ -141,4 +147,4 @@ def build_metrics_table(
                 ),
             }
         )
-    return pd.DataFrame(rows).sort_values(["comparison", "family", "mode", "l_value", "strategy"]).reset_index(drop=True)
+    return pd.DataFrame(rows).sort_values(["comparison", "family", "forecast_mode", "mode", "l_value", "strategy"]).reset_index(drop=True)

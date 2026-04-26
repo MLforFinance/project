@@ -23,6 +23,7 @@ def main() -> None:
         backtest=args.backtest,
         window_size=args.window_size,
         transaction_cost_bps=args.transaction_cost_bps,
+        forecast_mode=args.forecast_mode,
     )
 
     print(f"Input CSV: {results['input_csv']}")
@@ -39,7 +40,11 @@ def main() -> None:
         print(f"Weights saved to: {results['backtest_paths']['weights']}")
         print(f"Predictions saved to: {results['backtest_paths']['predictions']}")
         print(f"Metrics saved to: {results['backtest_paths']['metrics']}")
+        print(f"Forecast mode: {results['backtest']['forecast_mode']}")
+        print(f"Forecast modes evaluated: {', '.join(results['backtest']['forecast_modes_evaluated'])}")
         print(f"Metrics table saved to: {results['backtest_paths']['metrics_table']}")
+        if results['backtest']['forecast_mode'] == 'both':
+            print(f"Forecast comparison graph saved to: {results['backtest_paths']['forecast_mode_comparison']}")
     if results["pca_plot_path"] is not None:
         print(f"PCA regime plot saved to: {results['pca_plot_path']}")
     if results["timeline_plot_path"] is not None:

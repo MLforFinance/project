@@ -17,6 +17,8 @@ from .backtest import run_walk_forward_backtest
 from .config import (
     DEFAULT_CLUSTER_COUNT,
     DEFAULT_ETF_TICKERS,
+    DEFAULT_FORECAST_MODE,
+    FORECAST_MODE_CHOICES,
     DEFAULT_PLOT_FORMAT,
     DEFAULT_TARGET_VARIANCE,
     DEFAULT_TRANSACTION_COST_BPS,
@@ -30,7 +32,7 @@ try:
     from ..models.modified_Kmeans import modified_KMeans
 except ImportError:  # pragma: no cover
     from models.modified_Kmeans import modified_KMeans
-from .reporting import build_result_tables, plot_all_methods_scaled_log_returns, plot_control_vs_treatment_boxplots, plot_cumulative_returns, plot_drawdowns, plot_family_vs_benchmarks, plot_rolling_sharpe, plot_scaled_log_returns, select_plot_columns
+from .reporting import build_result_tables, plot_all_methods_scaled_log_returns, plot_control_vs_treatment_boxplots, plot_cumulative_returns, plot_drawdowns, plot_family_vs_benchmarks, plot_forecast_mode_comparison, plot_rolling_sharpe, plot_scaled_log_returns, select_plot_columns
 
 
 def run_pipeline(
@@ -48,6 +50,7 @@ def run_pipeline(
     backtest: bool = False,
     window_size: int = DEFAULT_WINDOW_SIZE,
     transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
+    forecast_mode: str = DEFAULT_FORECAST_MODE,
     asset_returns_df: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     data_dir = default_data_dir()
@@ -102,6 +105,7 @@ def run_pipeline(
             window_size=window_size,
             ridge_alpha=ridge_alpha,
             transaction_cost_bps=transaction_cost_bps,
+            forecast_mode=forecast_mode,
         )
         backtest_results["portfolio_returns"].to_csv(backtest_paths["portfolio_returns"])
         backtest_results["gross_portfolio_returns"].to_csv(backtest_paths["gross_portfolio_returns"])
@@ -112,6 +116,8 @@ def run_pipeline(
         backtest_results["metrics_table"].to_csv(backtest_paths["metrics_table"], index=False)
         metrics_payload = {
             "transaction_cost_bps": backtest_results["transaction_cost_bps"],
+            "forecast_mode": backtest_results["forecast_mode"],
+            "forecast_modes_evaluated": backtest_results["forecast_modes_evaluated"],
             "strategies": backtest_results["metrics_json"],
         }
         with backtest_paths["metrics"].open("w", encoding="utf-8") as handle:
@@ -137,6 +143,8 @@ def run_pipeline(
                 plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_monthly"], annualized=False, show=show_plots, strategy_name=primary_strategy, transaction_cost_bps=transaction_cost_bps)
                 plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_annualized"], annualized=True, show=show_plots, strategy_name=primary_strategy, transaction_cost_bps=transaction_cost_bps)
             plot_control_vs_treatment_boxplots(backtest_results["metrics_table"], backtest_paths["boxplots"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            if backtest_results["forecast_mode"] == "both":
+                plot_forecast_mode_comparison(backtest_results["metrics_table"], backtest_paths["forecast_mode_comparison"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
 
     if plot:
         plot_pca_clusters(reduced_df, regimes_series, output_path=pca_plot_path, show=show_plots, default_plot_format=plot_format)
@@ -190,5 +198,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-size", type=int, default=DEFAULT_WINDOW_SIZE, help="Walk-forward estimation window in months.")
     parser.add_argument("--ridge-alpha", type=float, default=1.0, help="Ridge regularization strength.")
     parser.add_argument("--transaction-cost-bps", type=float, default=DEFAULT_TRANSACTION_COST_BPS, help="One-way transaction cost in basis points applied to monthly traded notional.")
+    parser.add_argument("--forecast-mode", choices=FORECAST_MODE_CHOICES, default=DEFAULT_FORECAST_MODE, help="How to use regime probabilities in forecasting: hard picks the top regime, soft blends by probabilities, both runs both variants for comparison.")
     parser.add_argument("--etf-tickers", nargs="+", default=DEFAULT_ETF_TICKERS, help="ETF tickers to download from Yahoo Finance.")
     return parser

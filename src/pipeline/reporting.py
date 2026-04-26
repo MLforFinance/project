@@ -43,6 +43,10 @@ def _family_columns(portfolio_returns: pd.DataFrame, family_prefix: str) -> list
     return [column for column in portfolio_returns.columns if column.startswith(f"{family_prefix}_")]
 
 
+def _base_strategy_name(strategy: str) -> str:
+    return strategy.split("__", 1)[0]
+
+
 def plot_cumulative_returns(
     returns_df: pd.DataFrame,
     output_path: Path,
@@ -277,6 +281,45 @@ def plot_control_vs_treatment_boxplots(
             data = [control[metric_key].dropna().to_numpy(), treatment[metric_key].dropna().to_numpy()]
             ax.boxplot(data, tick_labels=[control_label, treatment_label])
             ax.set_title(f"{comparison}: {metric_label}{_cost_label(transaction_cost_bps)}")
+    plt.tight_layout()
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
+
+
+def plot_forecast_mode_comparison(
+    metrics_table: pd.DataFrame,
+    output_path: Path,
+    metric_key: str = "sharpe_annualized",
+    show: bool = False,
+    transaction_cost_bps: float | None = None,
+) -> None:
+    subset = metrics_table[metrics_table["forecast_mode"].isin(["hard", "soft"])].copy()
+    if subset.empty:
+        return
+
+    subset["base_strategy"] = subset["strategy"].map(_base_strategy_name)
+    pivot = subset.pivot_table(index="base_strategy", columns="forecast_mode", values=metric_key, aggfunc="first")
+    pivot = pivot.dropna(subset=["hard", "soft"])
+    if pivot.empty:
+        return
+
+    pivot = pivot.sort_values("soft", ascending=True)
+    y = np.arange(len(pivot))
+    height = 0.38
+
+    fig_height = max(6, 0.28 * len(pivot) + 1.5)
+    fig, ax = plt.subplots(figsize=(14, fig_height))
+    ax.barh(y - height / 2, pivot["hard"], height=height, label="Hard", color="#c44e52", alpha=0.85)
+    ax.barh(y + height / 2, pivot["soft"], height=height, label="Soft", color="#4c72b0", alpha=0.85)
+    ax.set_yticks(y)
+    ax.set_yticklabels(pivot.index)
+    ax.set_xlabel(metric_key.replace("_", " ").title())
+    ax.set_title(f"Hard vs Soft Forecast Comparison ({metric_key.replace('_', ' ').title()}){_cost_label(transaction_cost_bps)}")
+    ax.axvline(0.0, color="black", linewidth=1, linestyle="--", alpha=0.6)
+    ax.legend(loc="best")
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
