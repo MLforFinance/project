@@ -7,13 +7,47 @@ from sklearn.linear_model import Ridge
 from .config import BLACK_LITTERMAN_TAU
 
 
+def _regime_weighted_mean(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray) -> pd.Series:
+    probs = np.asarray(probs_next, dtype=float)
+    weighted_sum = pd.Series(0.0, index=returns_df.columns, dtype=float)
+    total_weight = 0.0
+
+    for regime, weight in enumerate(probs):
+        if weight <= 0:
+            continue
+        subset = returns_df.loc[regimes == regime]
+        if subset.empty:
+            continue
+        weighted_sum = weighted_sum.add(subset.mean() * weight, fill_value=0.0)
+        total_weight += float(weight)
+
+    if total_weight <= 0:
+        return returns_df.mean()
+    return weighted_sum / total_weight
+
+
+def _regime_weighted_std(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray) -> pd.Series:
+    probs = np.asarray(probs_next, dtype=float)
+    weighted_sum = pd.Series(0.0, index=returns_df.columns, dtype=float)
+    total_weight = 0.0
+
+    for regime, weight in enumerate(probs):
+        if weight <= 0:
+            continue
+        subset = returns_df.loc[regimes == regime]
+        if subset.empty:
+            continue
+        weighted_sum = weighted_sum.add(subset.std() * weight, fill_value=0.0)
+        total_weight += float(weight)
+
+    if total_weight <= 0:
+        return returns_df.std()
+    return weighted_sum / total_weight
+
+
 def forecast_naive_sharpe(returns_df: pd.DataFrame, regimes: pd.Series, probs_next: np.ndarray) -> pd.Series:
-    target_regime = int(np.argmax(probs_next))
-    subset = returns_df.loc[regimes == target_regime]
-    if subset.empty:
-        subset = returns_df
-    mu = subset.mean()
-    sigma = subset.std().replace(0, 1e-8)
+    mu = _regime_weighted_mean(returns_df, regimes, probs_next)
+    sigma = _regime_weighted_std(returns_df, regimes, probs_next).replace(0, 1e-8)
     return mu / sigma
 
 
@@ -68,11 +102,7 @@ def forecast_black_litterman_scores(
     sigma = returns_df.cov().to_numpy(copy=True)
     sigma += np.eye(len(mu_prior)) * 1e-6
 
-    target_regime = int(np.argmax(probs_next))
-    subset = returns_df.loc[regimes == target_regime]
-    if subset.empty:
-        subset = returns_df
-    q_star = subset.mean().to_numpy()
+    q_star = _regime_weighted_mean(returns_df, regimes, probs_next).to_numpy()
 
     tau_sigma = tau * sigma
     tau_sigma_inv = np.linalg.pinv(tau_sigma)

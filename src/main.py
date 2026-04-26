@@ -22,6 +22,7 @@ def main() -> None:
         download_etfs=args.download_etfs,
         backtest=args.backtest,
         window_size=args.window_size,
+        transaction_cost_bps=args.transaction_cost_bps,
     )
 
     print(f"Input CSV: {results['input_csv']}")
@@ -31,7 +32,10 @@ def main() -> None:
     if results["asset_returns"] is not None:
         print(f"ETF returns path: {results['backtest_paths']['etf_returns']}")
     if results["backtest"] is not None:
-        print(f"Portfolio returns saved to: {results['backtest_paths']['portfolio_returns']}")
+        print(f"Net portfolio returns saved to: {results['backtest_paths']['portfolio_returns']}")
+        print(f"Gross portfolio returns saved to: {results['backtest_paths']['gross_portfolio_returns']}")
+        print(f"Turnover saved to: {results['backtest_paths']['turnover']}")
+        print(f"Transaction costs saved to: {results['backtest_paths']['transaction_costs']}")
         print(f"Weights saved to: {results['backtest_paths']['weights']}")
         print(f"Predictions saved to: {results['backtest_paths']['predictions']}")
         print(f"Metrics saved to: {results['backtest_paths']['metrics']}")

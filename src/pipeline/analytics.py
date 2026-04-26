@@ -23,7 +23,6 @@ def sharpe_ratio(returns: pd.Series, annualize: bool = False) -> float:
 def sortino_ratio(returns: pd.Series, annualize: bool = False) -> float:
     target = 0.0
     excess = returns - target
-    # clip, don't filter
     downside = np.minimum(0, excess)
     downside_std = np.sqrt((downside ** 2).mean())
     if pd.isna(downside_std) or downside_std == 0:
@@ -54,9 +53,19 @@ def positive_return_pct(returns: pd.Series) -> float:
     return float((returns > 0).mean())
 
 
-def compute_performance_metrics(returns: pd.Series) -> dict[str, float]:
+def compute_performance_metrics(
+    returns: pd.Series,
+    gross_returns: pd.Series | None = None,
+    turnover: pd.Series | None = None,
+    transaction_costs: pd.Series | None = None,
+) -> dict[str, float]:
+    gross = returns if gross_returns is None else gross_returns.reindex(returns.index).fillna(0.0)
+    turnover_series = pd.Series(0.0, index=returns.index) if turnover is None else turnover.reindex(returns.index).fillna(0.0)
+    cost_series = pd.Series(0.0, index=returns.index) if transaction_costs is None else transaction_costs.reindex(returns.index).fillna(0.0)
+
     return {
         "mean_return": float(returns.mean()),
+        "gross_mean_return": float(gross.mean()),
         "volatility": float(returns.std()),
         "sharpe_monthly": sharpe_ratio(returns, annualize=False),
         "sharpe_annualized": sharpe_ratio(returns, annualize=True),
@@ -66,6 +75,11 @@ def compute_performance_metrics(returns: pd.Series) -> dict[str, float]:
         "max_drawdown": max_drawdown(returns),
         "positive_return_pct": positive_return_pct(returns),
         "cumulative_return": float((1.0 + returns).prod() - 1.0),
+        "avg_monthly_turnover": float(turnover_series.mean()),
+        "annualized_turnover": float(turnover_series.mean() * 12.0),
+        "mean_transaction_cost": float(cost_series.mean()),
+        "total_transaction_cost": float(cost_series.sum()),
+        "cost_drag_mean_return": float(gross.mean() - returns.mean()),
     }
 
 
@@ -97,7 +111,12 @@ def is_strategy_column(column: str) -> bool:
     return any(column.startswith(family + "_") for family in MODEL_FAMILIES)
 
 
-def build_metrics_table(portfolio_returns: pd.DataFrame) -> pd.DataFrame:
+def build_metrics_table(
+    portfolio_returns: pd.DataFrame,
+    gross_returns: pd.DataFrame | None = None,
+    turnover: pd.DataFrame | None = None,
+    transaction_costs: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     rows = []
     for column in portfolio_returns.columns:
         if is_strategy_column(column):
@@ -112,5 +131,14 @@ def build_metrics_table(portfolio_returns: pd.DataFrame) -> pd.DataFrame:
                 "comparison": "benchmark",
             }
         rows.append(
-            {**meta, **compute_performance_metrics(portfolio_returns[column])})
+            {
+                **meta,
+                **compute_performance_metrics(
+                    portfolio_returns[column],
+                    gross_returns=None if gross_returns is None or column not in gross_returns.columns else gross_returns[column],
+                    turnover=None if turnover is None or column not in turnover.columns else turnover[column],
+                    transaction_costs=None if transaction_costs is None or column not in transaction_costs.columns else transaction_costs[column],
+                ),
+            }
+        )
     return pd.DataFrame(rows).sort_values(["comparison", "family", "mode", "l_value", "strategy"]).reset_index(drop=True)

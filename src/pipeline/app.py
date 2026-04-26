@@ -14,7 +14,15 @@ except ImportError:  # pragma: no cover
     from data_processing.preprocessing import preprocess_fred_md
 
 from .backtest import run_walk_forward_backtest
-from .config import DEFAULT_CLUSTER_COUNT, DEFAULT_ETF_TICKERS, DEFAULT_PLOT_FORMAT, DEFAULT_TARGET_VARIANCE, DEFAULT_TRIM_ROWS, DEFAULT_WINDOW_SIZE
+from .config import (
+    DEFAULT_CLUSTER_COUNT,
+    DEFAULT_ETF_TICKERS,
+    DEFAULT_PLOT_FORMAT,
+    DEFAULT_TARGET_VARIANCE,
+    DEFAULT_TRANSACTION_COST_BPS,
+    DEFAULT_TRIM_ROWS,
+    DEFAULT_WINDOW_SIZE,
+)
 from .data_sources import align_macro_and_returns, download_etf_prices, ensure_month_start_index, prices_to_returns
 from .paths import default_data_dir, derive_backtest_paths, derive_output_paths, derive_plot_paths, discover_input_csv
 from .regime_pipeline import compute_transition_matrix, next_regime_probs, plot_kmeans_regimes, plot_pca_clusters, renormalize_probabilities
@@ -39,6 +47,7 @@ def run_pipeline(
     download_etfs: bool = False,
     backtest: bool = False,
     window_size: int = DEFAULT_WINDOW_SIZE,
+    transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
     asset_returns_df: pd.DataFrame | None = None,
 ) -> dict[str, object]:
     data_dir = default_data_dir()
@@ -92,13 +101,21 @@ def run_pipeline(
             regime_count=regime_count,
             window_size=window_size,
             ridge_alpha=ridge_alpha,
+            transaction_cost_bps=transaction_cost_bps,
         )
         backtest_results["portfolio_returns"].to_csv(backtest_paths["portfolio_returns"])
+        backtest_results["gross_portfolio_returns"].to_csv(backtest_paths["gross_portfolio_returns"])
+        backtest_results["turnover"].to_csv(backtest_paths["turnover"])
+        backtest_results["transaction_costs"].to_csv(backtest_paths["transaction_costs"])
         backtest_results["weights"].to_csv(backtest_paths["weights"])
         backtest_results["predictions"].to_csv(backtest_paths["predictions"])
         backtest_results["metrics_table"].to_csv(backtest_paths["metrics_table"], index=False)
+        metrics_payload = {
+            "transaction_cost_bps": backtest_results["transaction_cost_bps"],
+            "strategies": backtest_results["metrics_json"],
+        }
         with backtest_paths["metrics"].open("w", encoding="utf-8") as handle:
-            json.dump(backtest_results["metrics_json"], handle, indent=2)
+            json.dump(metrics_payload, handle, indent=2)
 
         result_tables = build_result_tables(backtest_results["metrics_table"])
         result_tables["naive_result_table"].to_csv(backtest_paths["naive_result_table"], index=False)
@@ -107,19 +124,19 @@ def run_pipeline(
 
         if plot:
             selected_columns = select_plot_columns(backtest_results["metrics_table"], backtest_results["portfolio_returns"])
-            plot_cumulative_returns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["cumulative_returns"], show=show_plots)
-            plot_drawdowns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["drawdown"], show=show_plots)
-            plot_scaled_log_returns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["scaled_log_returns"], show=show_plots)
-            plot_all_methods_scaled_log_returns(backtest_results["portfolio_returns"], backtest_paths["all_methods_scaled_log_returns"], show=show_plots)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "naive", backtest_paths["naive_vs_benchmarks"], show=show_plots)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "mvo", backtest_paths["mvo_vs_benchmarks"], show=show_plots)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "black_litterman", backtest_paths["black_litterman_vs_benchmarks"], show=show_plots)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "ridge", backtest_paths["ridge_vs_benchmarks"], show=show_plots)
+            plot_cumulative_returns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["cumulative_returns"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_drawdowns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["drawdown"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_scaled_log_returns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["scaled_log_returns"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_all_methods_scaled_log_returns(backtest_results["portfolio_returns"], backtest_paths["all_methods_scaled_log_returns"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "naive", backtest_paths["naive_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "mvo", backtest_paths["mvo_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "black_litterman", backtest_paths["black_litterman_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "ridge", backtest_paths["ridge_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
             if selected_columns:
                 primary_strategy = selected_columns[0] if selected_columns[0] not in {"SPY_buy_and_hold", "equal_weight_benchmark"} else (selected_columns[2] if len(selected_columns) > 2 else selected_columns[0])
-                plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_monthly"], annualized=False, show=show_plots)
-                plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_annualized"], annualized=True, show=show_plots)
-            plot_control_vs_treatment_boxplots(backtest_results["metrics_table"], backtest_paths["boxplots"], show=show_plots)
+                plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_monthly"], annualized=False, show=show_plots, strategy_name=primary_strategy, transaction_cost_bps=transaction_cost_bps)
+                plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_annualized"], annualized=True, show=show_plots, strategy_name=primary_strategy, transaction_cost_bps=transaction_cost_bps)
+            plot_control_vs_treatment_boxplots(backtest_results["metrics_table"], backtest_paths["boxplots"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
 
     if plot:
         plot_pca_clusters(reduced_df, regimes_series, output_path=pca_plot_path, show=show_plots, default_plot_format=plot_format)
@@ -172,5 +189,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--backtest", action="store_true", help="Run the paper-style walk-forward backtest.")
     parser.add_argument("--window-size", type=int, default=DEFAULT_WINDOW_SIZE, help="Walk-forward estimation window in months.")
     parser.add_argument("--ridge-alpha", type=float, default=1.0, help="Ridge regularization strength.")
+    parser.add_argument("--transaction-cost-bps", type=float, default=DEFAULT_TRANSACTION_COST_BPS, help="One-way transaction cost in basis points applied to monthly traded notional.")
     parser.add_argument("--etf-tickers", nargs="+", default=DEFAULT_ETF_TICKERS, help="ETF tickers to download from Yahoo Finance.")
     return parser

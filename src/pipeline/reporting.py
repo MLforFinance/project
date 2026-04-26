@@ -9,6 +9,12 @@ import pandas as pd
 from .analytics import compute_drawdown, scale_to_target_vol
 
 
+def _cost_label(transaction_cost_bps: float | None) -> str:
+    if transaction_cost_bps is None:
+        return ""
+    return f" | TC = {float(transaction_cost_bps):g} bps"
+
+
 def flatten_panel(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
     parts = []
     for strategy, frame in panel.items():
@@ -37,12 +43,17 @@ def _family_columns(portfolio_returns: pd.DataFrame, family_prefix: str) -> list
     return [column for column in portfolio_returns.columns if column.startswith(f"{family_prefix}_")]
 
 
-def plot_cumulative_returns(returns_df: pd.DataFrame, output_path: Path, show: bool = False) -> None:
+def plot_cumulative_returns(
+    returns_df: pd.DataFrame,
+    output_path: Path,
+    show: bool = False,
+    transaction_cost_bps: float | None = None,
+) -> None:
     cumulative = (1.0 + returns_df).cumprod()
     fig, ax = plt.subplots(figsize=(12, 6))
     for column in cumulative.columns:
         ax.plot(cumulative.index, cumulative[column], label=column)
-    ax.set_title("Strategy vs Benchmark Cumulative Returns")
+    ax.set_title(f"Strategy vs Benchmark Cumulative Returns (Net of Transaction Costs){_cost_label(transaction_cost_bps)}")
     ax.set_ylabel("Growth of $1")
     ax.set_xlabel("Date")
     ax.legend(loc="best", fontsize=8)
@@ -54,12 +65,17 @@ def plot_cumulative_returns(returns_df: pd.DataFrame, output_path: Path, show: b
     plt.close(fig)
 
 
-def plot_drawdowns(returns_df: pd.DataFrame, output_path: Path, show: bool = False) -> None:
+def plot_drawdowns(
+    returns_df: pd.DataFrame,
+    output_path: Path,
+    show: bool = False,
+    transaction_cost_bps: float | None = None,
+) -> None:
     drawdowns = returns_df.apply(compute_drawdown)
     fig, ax = plt.subplots(figsize=(12, 6))
     for column in drawdowns.columns:
         ax.plot(drawdowns.index, drawdowns[column], label=column)
-    ax.set_title("Drawdowns")
+    ax.set_title(f"Drawdowns (Net of Transaction Costs){_cost_label(transaction_cost_bps)}")
     ax.set_ylabel("Drawdown")
     ax.set_xlabel("Date")
     ax.legend(loc="best", fontsize=8)
@@ -71,13 +87,18 @@ def plot_drawdowns(returns_df: pd.DataFrame, output_path: Path, show: bool = Fal
     plt.close(fig)
 
 
-def plot_scaled_log_returns(returns_df: pd.DataFrame, output_path: Path, show: bool = False) -> None:
+def plot_scaled_log_returns(
+    returns_df: pd.DataFrame,
+    output_path: Path,
+    show: bool = False,
+    transaction_cost_bps: float | None = None,
+) -> None:
     scaled = scale_to_target_vol(returns_df)
     cumulative_log = np.log1p(scaled).cumsum()
     fig, ax = plt.subplots(figsize=(12, 6))
     for column in cumulative_log.columns:
         ax.plot(cumulative_log.index, cumulative_log[column], label=column)
-    ax.set_title("Cumulative Log Returns at 10% Volatility Scaling")
+    ax.set_title(f"Cumulative Log Returns at 10% Volatility Scaling (Net){_cost_label(transaction_cost_bps)}")
     ax.set_ylabel("Cumulative log return")
     ax.set_xlabel("Date")
     ax.legend(loc="best", fontsize=8)
@@ -93,6 +114,7 @@ def plot_all_methods_scaled_log_returns(
     portfolio_returns: pd.DataFrame,
     output_path: Path,
     show: bool = False,
+    transaction_cost_bps: float | None = None,
 ) -> None:
     scaled = scale_to_target_vol(portfolio_returns)
     cumulative_log = np.log1p(scaled).cumsum()
@@ -119,7 +141,7 @@ def plot_all_methods_scaled_log_returns(
         if column in cumulative_log.columns:
             ax.plot(cumulative_log.index, cumulative_log[column], color=color, linewidth=linewidth, alpha=alpha, label=label)
 
-    ax.set_title("Portfolio Cumulative Log Returns (Volatility Scaling): vol_target = 10.0%")
+    ax.set_title(f"Portfolio Cumulative Log Returns (Volatility Scaling, Net): vol_target = 10.0%{_cost_label(transaction_cost_bps)}")
     ax.set_ylabel("Cumulative Log Returns (Vol. Target of 10%)")
     ax.set_xlabel("Date")
     ax.legend(loc="best")
@@ -136,6 +158,7 @@ def plot_family_vs_benchmarks(
     family: str,
     output_path: Path,
     show: bool = False,
+    transaction_cost_bps: float | None = None,
 ) -> None:
     scaled = scale_to_target_vol(portfolio_returns)
     cumulative_log = np.log1p(scaled).cumsum()
@@ -180,7 +203,7 @@ def plot_family_vs_benchmarks(
                 label="MVO" if idx == 0 else None,
             )
 
-    ax.set_title(f"{family_label} Portfolio ({family}) vs Benchmarks")
+    ax.set_title(f"{family_label} Portfolio ({family}) vs Benchmarks (Net){_cost_label(transaction_cost_bps)}")
     ax.set_ylabel("Cumulative Log Returns (Vol. Target of 10%)")
     ax.set_xlabel("Date")
     ax.legend(loc="best")
@@ -198,6 +221,8 @@ def plot_rolling_sharpe(
     window: int = 12,
     annualized: bool = False,
     show: bool = False,
+    strategy_name: str | None = None,
+    transaction_cost_bps: float | None = None,
 ) -> None:
     rolling_mean = returns.rolling(window).mean()
     rolling_std = returns.rolling(window).std().replace(0, np.nan)
@@ -207,11 +232,12 @@ def plot_rolling_sharpe(
 
     title_suffix = "annualized" if annualized else "monthly"
     label_suffix = "annualized" if annualized else "monthly"
+    display_name = strategy_name or returns.name or "strategy"
 
     fig, ax = plt.subplots(figsize=(12, 4))
-    ax.plot(rolling_sharpe.index, rolling_sharpe, label=f"12-month rolling Sharpe ({label_suffix})")
+    ax.plot(rolling_sharpe.index, rolling_sharpe, label=f"{display_name} | {window}-month rolling Sharpe ({label_suffix})")
     ax.axhline(0.0, color="black", linestyle="--", linewidth=1)
-    ax.set_title(f"Rolling Sharpe ({title_suffix})")
+    ax.set_title(f"Rolling Sharpe ({title_suffix}, net): {display_name}{_cost_label(transaction_cost_bps)}")
     ax.set_xlabel("Date")
     ax.set_ylabel("Sharpe ratio")
     ax.legend(loc="best")
@@ -223,7 +249,12 @@ def plot_rolling_sharpe(
     plt.close(fig)
 
 
-def plot_control_vs_treatment_boxplots(metrics_table: pd.DataFrame, output_path: Path, show: bool = False) -> None:
+def plot_control_vs_treatment_boxplots(
+    metrics_table: pd.DataFrame,
+    output_path: Path,
+    show: bool = False,
+    transaction_cost_bps: float | None = None,
+) -> None:
     comparisons = [
         ("naive_vs_random", "Naive", "Random"),
         ("bl_vs_mvo", "Black-Litterman", "MVO"),
@@ -245,7 +276,7 @@ def plot_control_vs_treatment_boxplots(metrics_table: pd.DataFrame, output_path:
             ax = axes[row_idx, col_idx]
             data = [control[metric_key].dropna().to_numpy(), treatment[metric_key].dropna().to_numpy()]
             ax.boxplot(data, tick_labels=[control_label, treatment_label])
-            ax.set_title(f"{comparison}: {metric_label}")
+            ax.set_title(f"{comparison}: {metric_label}{_cost_label(transaction_cost_bps)}")
     plt.tight_layout()
     output_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
