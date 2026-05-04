@@ -19,7 +19,7 @@ def fit_gmm_hmm(X: pd.DataFrame,
                 covariance_type: str = "full",
                 n_iter: int = 1000,
                 random_state: int = 42,
-                tol:float = 1e-3,
+                tol:float = 1e-7,
                 plot_convergence:bool = True):
     
     model = hmm.GaussianHMM(

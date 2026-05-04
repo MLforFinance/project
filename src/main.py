@@ -208,7 +208,7 @@ def run_hmm_pipeline(
         n_neighbors=15,
         min_dist=0.0,
         metric="cosine",
-        epochs = 1000
+        epochs = 500
     )
     reduced_df.to_csv(reduced_path)
     
@@ -321,7 +321,7 @@ def main() -> None:
             output_dir = args.output_dir,
             regime_count = args.regime_count,
             trim_rows=args.trim_rows,
-            plot=not args.no_plots,
+            plot= not args.no_plots,
             plot_format=args.plot_format,
             show_plots=args.show_plots
         )

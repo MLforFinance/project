@@ -10,11 +10,13 @@ try:
     from .factors_em import factors_em
     from .remove_outliers import remove_outliers
     from .prepare_missing import prepare_missing, compute_NA
+    from .feature_engineering import feature_engineering
 except ImportError:  # pragma: no cover - supports direct script execution
     from mrsq import mrsq
     from factors_em import factors_em
     from remove_outliers import remove_outliers
     from prepare_missing import prepare_missing, compute_NA
+    from feature_engineering import feature_engineering
 
 
 DEFAULT_CSV_PATH = Path("data/2026-02-MD.csv")
@@ -65,6 +67,7 @@ def infer_burn_in_rows(tcode) -> int:
 def preprocess_fred_md(
     input_path: str | Path,
     output_path: str | Path | None = None,
+    feature_engineering:bool = False,
     trim_rows: int | None = None,
     excluded_columns: tuple[str, ...] = GROUP_6_COLUMNS,
     demean: int = DEMEAN,
@@ -109,6 +112,10 @@ def preprocess_fred_md(
 
     if verbose:
         print((compute_NA(transformed_df) == 0).all())
+
+
+    if feature_engineering:
+        pass
 
     scaler = StandardScaler()
     scaled_data = pd.DataFrame(

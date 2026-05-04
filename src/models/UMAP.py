@@ -2,8 +2,6 @@ import umap
 import pandas as pd
 import numpy as np
 from hmmlearn import hmm
-from sklearn.metrics import silhouette_score
-from sklearn.manifold import trustworthiness
 
 def fit_umap(X: pd.DataFrame,
              n_components: int = 4,
