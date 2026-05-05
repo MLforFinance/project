@@ -24,6 +24,12 @@ def main() -> None:
         window_size=args.window_size,
         transaction_cost_bps=args.transaction_cost_bps,
         forecast_mode=args.forecast_mode,
+        regime_model=args.regime_model,
+        use_pca_for_regime=args.use_pca_for_regime,
+        prob_mode=args.prob_mode,
+        umap_components=args.umap_components,
+        umap_n_neighbors=args.umap_n_neighbors,
+        iso_score_scale=args.iso_score_scale,
     )
 
     print(f"Input CSV: {results['input_csv']}")

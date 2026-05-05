@@ -7,8 +7,10 @@ from pathlib import Path
 
 try:
     from ..models.modified_Kmeans import modified_KMeans, plot_kmeans_regimes
+    from ..models.Isolation import Isolation_UMAP_HMM
 except ImportError:  # pragma: no cover
     from models.modified_Kmeans import modified_KMeans, plot_kmeans_regimes
+    from models.Isolation import Isolation_UMAP_HMM
 
 
 def plot_pca_clusters(reduced_df: pd.DataFrame, regimes: pd.Series, output_path: Path | None = None, show: bool = False, default_plot_format: str = "svg") -> None:
@@ -74,11 +76,43 @@ def compute_window_regime_state(X_window: pd.DataFrame, regime_count: int) -> di
     }
 
 
+def compute_window_regime_state_hmm(
+    X_window: pd.DataFrame,
+    regime_count: int,
+    prob_mode: str = "soft",
+    umap_components: int = 4,
+    umap_n_neighbors: int = 15,
+    umap_epochs: int = 500,
+    iso_score_scale: float = 5.0,
+) -> dict[str, pd.DataFrame | pd.Series]:
+    regimes, probs, pred_isolation, umap_reduced, hmm_states_full, umap_mapper, hmm_model, anomaly_mask = Isolation_UMAP_HMM(
+        X_window,
+        r=regime_count,
+        prob_mode=prob_mode,
+        umap_components=umap_components,
+        umap_n_neighbors=umap_n_neighbors,
+        umap_epochs=umap_epochs,
+        iso_score_scale=iso_score_scale,
+    )
+    prob_columns = [f"regime_prob_{i}" for i in range(regime_count + 1)]
+    return {
+        "regimes": pd.Series(regimes, index=X_window.index, name="regime"),
+        "probabilities": pd.DataFrame(probs, index=X_window.index, columns=prob_columns),
+        "pred_isolation": pred_isolation,
+        "umap_reduced": umap_reduced,
+        "hmm_states_full": hmm_states_full,
+        "umap_mapper": umap_mapper,
+        "hmm_model": hmm_model,
+        "anomaly_mask": anomaly_mask,
+    }
+
+
 __all__ = [
     "compute_transition_matrix",
     "renormalize_probabilities",
     "next_regime_probs",
     "compute_window_regime_state",
+    "compute_window_regime_state_hmm",
     "plot_pca_clusters",
     "plot_kmeans_regimes",
 ]

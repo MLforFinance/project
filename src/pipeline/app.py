@@ -19,19 +19,28 @@ from .config import (
     DEFAULT_ETF_TICKERS,
     DEFAULT_FORECAST_MODE,
     FORECAST_MODE_CHOICES,
+    DEFAULT_ISO_SCORE_SCALE,
     DEFAULT_PLOT_FORMAT,
+    DEFAULT_PROB_MODE,
+    DEFAULT_REGIME_MODEL,
     DEFAULT_TARGET_VARIANCE,
     DEFAULT_TRANSACTION_COST_BPS,
     DEFAULT_TRIM_ROWS,
+    DEFAULT_UMAP_COMPONENTS,
     DEFAULT_WINDOW_SIZE,
+    PROB_MODE_CHOICES,
+    REGIME_MODEL_CHOICES,
+    CONTAMINATION_RATE
 )
 from .data_sources import align_macro_and_returns, download_etf_prices, ensure_month_start_index, prices_to_returns
 from .paths import default_data_dir, derive_backtest_paths, derive_output_paths, derive_plot_paths, discover_input_csv
 from .regime_pipeline import compute_transition_matrix, next_regime_probs, plot_kmeans_regimes, plot_pca_clusters, renormalize_probabilities
 try:
     from ..models.modified_Kmeans import modified_KMeans
+    from ..models.Isolation import Isolation_UMAP_HMM
 except ImportError:  # pragma: no cover
     from models.modified_Kmeans import modified_KMeans
+    from models.Isolation import Isolation_UMAP_HMM
 from .reporting import build_result_tables, plot_all_methods_scaled_log_returns, plot_control_vs_treatment_boxplots, plot_cumulative_returns, plot_drawdowns, plot_family_vs_benchmarks, plot_forecast_mode_comparison, plot_rolling_sharpe, plot_scaled_log_returns, select_plot_columns
 
 
@@ -52,6 +61,12 @@ def run_pipeline(
     transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
     forecast_mode: str = DEFAULT_FORECAST_MODE,
     asset_returns_df: pd.DataFrame | None = None,
+    regime_model: str = DEFAULT_REGIME_MODEL,
+    use_pca_for_regime: bool = False,
+    prob_mode: str = DEFAULT_PROB_MODE,
+    umap_components: int = DEFAULT_UMAP_COMPONENTS,
+    umap_n_neighbors: int = 15,
+    iso_score_scale: float = DEFAULT_ISO_SCORE_SCALE,
 ) -> dict[str, object]:
     data_dir = default_data_dir()
     input_path = Path(input_csv) if input_csv is not None else discover_input_csv(data_dir)
@@ -69,10 +84,49 @@ def run_pipeline(
     reduced_df = ensure_month_start_index(reduced_df)
     reduced_df.to_csv(reduced_path)
 
-    full_regimes, full_probs, pred_l2, pred_cos, l2_centers, cosine_centers, minority_cluster = modified_KMeans(reduced_df, r=regime_count)
     prob_columns = [f"regime_prob_{i}" for i in range(regime_count + 1)]
-    regimes_series = pd.Series(full_regimes, index=reduced_df.index, name="regime")
-    probs_df = pd.DataFrame(full_probs, index=reduced_df.index, columns=prob_columns)
+    kmeans_artifacts = None
+    isolation_umap_hmm_artifacts = None
+
+    if regime_model == "isolation_umap_hmm":
+        regime_input = reduced_df if use_pca_for_regime else processed_df
+        (
+            full_regimes, full_probs,
+            pred_isolation, umap_reduced, hmm_states_full,
+            umap_mapper, hmm_model, anomaly_mask,
+        ) = Isolation_UMAP_HMM(
+            regime_input,
+            r=regime_count,
+            prob_mode=prob_mode,
+            umap_components=umap_components,
+            umap_n_neighbors=umap_n_neighbors,
+            iso_score_scale=iso_score_scale,
+            contamination = CONTAMINATION_RATE
+        )
+        isolation_umap_hmm_artifacts = {
+            "pred_isolation": pred_isolation,
+            "umap_reduced": umap_reduced,
+            "hmm_states_full": hmm_states_full,
+            "umap_mapper": umap_mapper,
+            "hmm_model": hmm_model,
+            "anomaly_mask": anomaly_mask,
+            "prob_mode": prob_mode,
+            "use_pca_for_regime": use_pca_for_regime,
+        }
+        regime_index = regime_input.index
+    else:
+        full_regimes, full_probs, pred_l2, pred_cos, l2_centers, cosine_centers, minority_cluster = modified_KMeans(reduced_df, r=regime_count)
+        kmeans_artifacts = {
+            "pred_l2": pred_l2,
+            "pred_cos": pred_cos,
+            "l2_centers": l2_centers,
+            "cosine_centers": cosine_centers,
+            "minority_cluster": minority_cluster,
+        }
+        regime_index = reduced_df.index
+
+    regimes_series = pd.Series(full_regimes, index=regime_index, name="regime")
+    probs_df = pd.DataFrame(full_probs, index=regime_index, columns=prob_columns)
     pd.concat([reduced_df, regimes_series, probs_df], axis=1).to_csv(regimes_path)
 
     transition_matrix = compute_transition_matrix(regimes_series, regime_count + 1)
@@ -106,6 +160,11 @@ def run_pipeline(
             ridge_alpha=ridge_alpha,
             transaction_cost_bps=transaction_cost_bps,
             forecast_mode=forecast_mode,
+            regime_model=regime_model,
+            prob_mode=prob_mode,
+            umap_components=umap_components,
+            umap_n_neighbors=umap_n_neighbors,
+            iso_score_scale=iso_score_scale,
         )
         backtest_results["portfolio_returns"].to_csv(backtest_paths["portfolio_returns"])
         backtest_results["gross_portfolio_returns"].to_csv(backtest_paths["gross_portfolio_returns"])
@@ -173,13 +232,9 @@ def run_pipeline(
         "pca_components": n_components,
         "pca_model": pca_model,
         "preprocessing": preprocessing_info,
-        "kmeans": {
-            "pred_l2": pred_l2,
-            "pred_cos": pred_cos,
-            "l2_centers": l2_centers,
-            "cosine_centers": cosine_centers,
-            "minority_cluster": minority_cluster,
-        },
+        "regime_model": regime_model,
+        "kmeans": kmeans_artifacts,
+        "isolation_umap_hmm": isolation_umap_hmm_artifacts,
     }
 
 
@@ -200,4 +255,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--transaction-cost-bps", type=float, default=DEFAULT_TRANSACTION_COST_BPS, help="One-way transaction cost in basis points applied to monthly traded notional.")
     parser.add_argument("--forecast-mode", choices=FORECAST_MODE_CHOICES, default=DEFAULT_FORECAST_MODE, help="How to use regime probabilities in forecasting: hard picks the top regime, soft blends by probabilities, both runs both variants for comparison.")
     parser.add_argument("--etf-tickers", nargs="+", default=DEFAULT_ETF_TICKERS, help="ETF tickers to download from Yahoo Finance.")
+    parser.add_argument("--regime-model", choices=REGIME_MODEL_CHOICES, default=DEFAULT_REGIME_MODEL, help="Regime detection model: kmeans (default) or isolation_umap_hmm.")
+    parser.add_argument("--use-pca-for-regime", action="store_true", help="For isolation_umap_hmm: run on PCA-reduced data instead of the full processed data.")
+    parser.add_argument("--prob-mode", choices=PROB_MODE_CHOICES, default=DEFAULT_PROB_MODE, help="For isolation_umap_hmm: hard uses binary Isolation Forest split; soft blends anomaly scores with HMM posteriors.")
+    parser.add_argument("--umap-components", type=int, default=DEFAULT_UMAP_COMPONENTS, help="Number of UMAP dimensions passed to the HMM.")
+    parser.add_argument("--umap-n-neighbors", type=int, default=15, help="UMAP n_neighbors parameter.")
+    parser.add_argument("--iso-score-scale", type=float, default=DEFAULT_ISO_SCORE_SCALE, help="Scale factor for the sigmoid that converts Isolation Forest decision scores to P(anomaly).")
     return parser

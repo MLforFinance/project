@@ -15,7 +15,7 @@ from .forecasting import (
     train_ridge_models,
 )
 from .portfolio import evolve_weights, position_weights, standardize_scores, traded_notional, transaction_cost
-from .regime_pipeline import compute_transition_matrix, compute_window_regime_state, next_regime_probs, renormalize_probabilities
+from .regime_pipeline import compute_transition_matrix, compute_window_regime_state, compute_window_regime_state_hmm, next_regime_probs, renormalize_probabilities
 from .reporting import flatten_panel
 
 
@@ -53,6 +53,11 @@ def run_walk_forward_backtest(
     sizing_modes: tuple[str, ...] = DEFAULT_SIZING_MODES,
     transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
     forecast_mode: str = DEFAULT_FORECAST_MODE,
+    regime_model: str = "kmeans",
+    prob_mode: str = "soft",
+    umap_components: int = 4,
+    umap_n_neighbors: int = 15,
+    iso_score_scale: float = 5.0,
 ) -> dict[str, object]:
     if len(X_full) < window_size:
         raise ValueError(f"Not enough aligned observations for a {window_size}-month window. Found {len(X_full)} rows.")
@@ -91,7 +96,17 @@ def run_walk_forward_backtest(
         realized_date = pd.Timestamp(target_dates[end_idx])
         realized_returns = Y_targets.iloc[end_idx].astype(float)
 
-        regime_state = compute_window_regime_state(X_window, regime_count=regime_count)
+        if regime_model == "isolation_umap_hmm":
+            regime_state = compute_window_regime_state_hmm(
+                X_window,
+                regime_count=regime_count,
+                prob_mode=prob_mode,
+                umap_components=umap_components,
+                umap_n_neighbors=umap_n_neighbors,
+                iso_score_scale=iso_score_scale,
+            )
+        else:
+            regime_state = compute_window_regime_state(X_window, regime_count=regime_count)
         R_window = regime_state["regimes"]
         P_window = regime_state["probabilities"]
         E_window = compute_transition_matrix(R_window, n_regimes)

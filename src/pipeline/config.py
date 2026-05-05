@@ -12,9 +12,21 @@ DEFAULT_SIZING_MODES = ("lo", "lns", "los", "mx")
 DEFAULT_TRANSACTION_COST_BPS = 20.0
 DEFAULT_FORECAST_MODE = "soft"
 FORECAST_MODE_CHOICES = ("hard", "soft", "both")
+DEFAULT_REGIME_MODEL = "kmeans"
+REGIME_MODEL_CHOICES = ("kmeans", "isolation_umap_hmm")
+
+
+DEFAULT_PROB_MODE = "hard"
+PROB_MODE_CHOICES = ("hard", "soft") 
+DEFAULT_UMAP_COMPONENTS = 4
+DEFAULT_ISO_SCORE_SCALE = 5.0
+CONTAMINATION_RATE = 0.08
+
+
 TARGET_ANNUAL_VOL = 0.10
 BLACK_LITTERMAN_TAU = 0.05
 RANDOM_SEED = 42
+
 
 MODEL_FAMILIES = {
     "naive": {"kind": "naive", "control_group": "treatment", "comparison": "naive_vs_random"},
