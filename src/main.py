@@ -30,6 +30,8 @@ def main() -> None:
         umap_components=args.umap_components,
         umap_n_neighbors=args.umap_n_neighbors,
         iso_score_scale=args.iso_score_scale,
+        feature_engineering=args.feature_engineering,
+        ema_span=args.ema_span,
     )
 
     print(f"Input CSV: {results['input_csv']}")

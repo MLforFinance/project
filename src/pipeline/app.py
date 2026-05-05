@@ -9,13 +9,16 @@ import pandas as pd
 try:
     from ..data_processing.PCA import optimal_PCA
     from ..data_processing.preprocessing import preprocess_fred_md
+    from ..data_processing.feature_engineering import apply_feature_engineering
 except ImportError:  # pragma: no cover
     from data_processing.PCA import optimal_PCA
     from data_processing.preprocessing import preprocess_fred_md
+    from data_processing.feature_engineering import apply_feature_engineering
 
 from .backtest import run_walk_forward_backtest
 from .config import (
     DEFAULT_CLUSTER_COUNT,
+    DEFAULT_EMA_SPAN,
     DEFAULT_ETF_TICKERS,
     DEFAULT_FORECAST_MODE,
     FORECAST_MODE_CHOICES,
@@ -67,6 +70,8 @@ def run_pipeline(
     umap_components: int = DEFAULT_UMAP_COMPONENTS,
     umap_n_neighbors: int = 15,
     iso_score_scale: float = DEFAULT_ISO_SCORE_SCALE,
+    feature_engineering: bool = False,
+    ema_span: int = DEFAULT_EMA_SPAN,
 ) -> dict[str, object]:
     data_dir = default_data_dir()
     input_path = Path(input_csv) if input_csv is not None else discover_input_csv(data_dir)
@@ -79,6 +84,10 @@ def run_pipeline(
 
     processed_df, preprocessing_info = preprocess_fred_md(input_path, processed_path, trim_rows=trim_rows)
     processed_df = ensure_month_start_index(processed_df)
+
+
+    if feature_engineering:
+        processed_df = apply_feature_engineering(processed_df, ema_span=ema_span)
 
     reduced_df, n_components, pca_model = optimal_PCA(processed_df, target_variance=target_variance, plot=False)
     reduced_df = ensure_month_start_index(reduced_df)
@@ -261,4 +270,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--umap-components", type=int, default=DEFAULT_UMAP_COMPONENTS, help="Number of UMAP dimensions passed to the HMM.")
     parser.add_argument("--umap-n-neighbors", type=int, default=15, help="UMAP n_neighbors parameter.")
     parser.add_argument("--iso-score-scale", type=float, default=DEFAULT_ISO_SCORE_SCALE, help="Scale factor for the sigmoid that converts Isolation Forest decision scores to P(anomaly).")
+    parser.add_argument("--feature-engineering", action="store_true", help="Augment processed data with EMA and first-order diff columns before PCA (127 → 381 columns).")
+    parser.add_argument("--ema-span", type=int, default=DEFAULT_EMA_SPAN, help="EMA span in months used when --feature-engineering is set. Default: 12.")
     return parser
