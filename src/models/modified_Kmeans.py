@@ -109,6 +109,7 @@ def plot_kmeans_regimes(data, regimes, recessions=None, output_path=None, show=F
     df_plot = df_plot.iloc[len(df_plot) - len(regimes):]
     df_plot["regime_label"] = regimes
 
+
     fig, ax = plt.subplots(figsize=(15, 5))
     unique_regimes = sorted(df_plot["regime_label"].unique())
 

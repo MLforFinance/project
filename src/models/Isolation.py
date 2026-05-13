@@ -1,16 +1,33 @@
-import pandas as pd
-import numpy as np
+from sklearn.cluster import KMeans
 from sklearn.ensemble import IsolationForest
-
-try:
-    from .modified_Kmeans import KMeansCosine, plot_kmeans_regimes
-except ImportError:  # pragma: no cover - supports direct script execution
-    from modified_Kmeans import KMeansCosine, plot_kmeans_regimes
+import numpy as np
+import pandas as pd
 
 
-def Isolation_KMeans(data: pd.DataFrame, r: int = 5):
-    model_Isolation = IsolationForest(n_estimators=100, bootstrap=True)
-    pred_isolation = model_Isolation.fit_predict(data)
+RANDOM_SEED = 42
+KMEANS_N_INIT = 10
+
+
+def Isolation_Euclidean_KMeans(
+    data: pd.DataFrame,
+    r: int = 5,
+    random_state: int = RANDOM_SEED,
+):
+    """
+    Match the old Test file exactly:
+    Isolation Forest first, then Euclidean KMeans.
+
+    Regime labels:
+        0      = smaller / abnormal Isolation Forest group
+        1 to r = Euclidean KMeans clusters on the larger group
+    """
+    model_isolation = IsolationForest(
+        n_estimators=100,
+        bootstrap=True,
+        random_state=random_state,
+    )
+
+    pred_isolation = model_isolation.fit_predict(data)
 
     mask_1 = pred_isolation == 1
     count_1 = np.sum(mask_1)
@@ -24,16 +41,24 @@ def Isolation_KMeans(data: pd.DataFrame, r: int = 5):
         majority_mask = mask_1
 
     final_regimes = np.zeros(len(data), dtype=int)
-    data_to_split = np.array(data[majority_mask])
 
-    labels_cos, centroids_cos, pred_cos = KMeansCosine(
-        data_to_split, k=r, epsilon=1e-4)
-    final_regimes[majority_mask] = labels_cos + 1
+    data_to_split = data.loc[majority_mask].copy()
+
+    model_kmeans = KMeans(
+        n_clusters=r,
+        random_state=random_state,
+        n_init=KMEANS_N_INIT,
+        tol=1e-5,
+    )
+
+    labels_kmeans = model_kmeans.fit_predict(data_to_split)
+
+    final_regimes[majority_mask] = labels_kmeans + 1
 
     return (
         final_regimes,
         pred_isolation,
-        pred_cos,
-        centroids_cos,
+        model_kmeans.labels_,
+        model_kmeans.cluster_centers_,
         index_least_freq,
     )
