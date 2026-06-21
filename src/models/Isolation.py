@@ -13,14 +13,6 @@ def Isolation_Euclidean_KMeans(
     r: int = 5,
     random_state: int = RANDOM_SEED,
 ):
-    """
-    Match the old Test file exactly:
-    Isolation Forest first, then Euclidean KMeans.
-
-    Regime labels:
-        0      = smaller / abnormal Isolation Forest group
-        1 to r = Euclidean KMeans clusters on the larger group
-    """
     model_isolation = IsolationForest(
         n_estimators=100,
         bootstrap=True,

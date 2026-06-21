@@ -13,34 +13,7 @@ def optimal_kernel_PCA(
     degree: int = 3,
     coef0: float = 1.0,
 ):
-    """
-    Run Kernel PCA on processed data.
-
-    Parameters
-    ----------
-    data : pd.DataFrame
-        Input processed data.
-    kernel : str
-        One of: "rbf", "cosine", "poly"
-    n_components : int
-        Number of kernel principal components to keep.
-    gamma : float | None
-        Kernel coefficient for rbf/poly.
-        If None, sklearn chooses its default.
-    degree : int
-        Degree for polynomial kernel.
-    coef0 : float
-        Independent term for polynomial kernel.
-
-    Returns
-    -------
-    reduced_df : pd.DataFrame
-        Kernel PCA scores with columns PC1, PC2, ...
-    n_components : int
-        Number of retained components
-    model : KernelPCA
-        Fitted KernelPCA model
-    """
+   
     model = KernelPCA(
         n_components=n_components,
         kernel=kernel,
