@@ -18,6 +18,19 @@ DEFAULT_WINDOW_SIZE = 48
 DEFAULT_L_VALUES = (2, 3, 4)
 DEFAULT_SIZING_MODES = ("lo", "lns", "los", "mx")
 DEFAULT_TRANSACTION_COST_BPS = 20.0
+DEFAULT_CASH_TICKER = "CASH"
+DEFAULT_ENABLE_CASH_ASSET = False
+DEFAULT_FIXED_OVERLAY_EXPOSURE = 1.00
+
+# Dynamic risk overlay settings. The overlay is disabled by default so the
+# pure soft-regime specification remains the baseline. When enabled, it uses
+# only past strategy returns and moves unused capital into synthetic 0%-return cash.
+DEFAULT_ENABLE_DYNAMIC_RISK_OVERLAY = False
+DEFAULT_OVERLAY_LOOKBACK_MONTHS = 6
+DEFAULT_OVERLAY_SOFT_DRAWDOWN = -0.10
+DEFAULT_OVERLAY_HARD_DRAWDOWN = -0.20
+DEFAULT_OVERLAY_SOFT_EXPOSURE = 0.70
+DEFAULT_OVERLAY_HARD_EXPOSURE = 0.40
 DEFAULT_FORECAST_MODE = "soft"
 FORECAST_MODE_CHOICES = ("hard", "soft", "both")
 TARGET_ANNUAL_VOL = 0.10

@@ -27,6 +27,37 @@ def regime_weights(probs_next: np.ndarray, forecast_mode: str) -> np.ndarray:
     raise ValueError("forecast_mode must be one of: 'hard', 'soft'.")
 
 
+
+
+def _normalize_regime_probability_frame(
+    regime_probabilities: pd.DataFrame | np.ndarray | None,
+    index: pd.Index,
+    n_regimes: int | None = None,
+) -> pd.DataFrame | None:
+    """Return soft regime probabilities aligned to index.
+
+    Rows are normalized to sum to 1. This lets the forecasting step estimate
+    regime-specific returns from fuzzy memberships rather than only hard labels.
+    """
+    if regime_probabilities is None:
+        return None
+
+    if isinstance(regime_probabilities, pd.DataFrame):
+        probs = regime_probabilities.reindex(index).astype(float)
+    else:
+        probs = pd.DataFrame(np.asarray(regime_probabilities, dtype=float), index=index)
+
+    if n_regimes is not None:
+        probs = probs.iloc[:, :n_regimes]
+
+    probs = probs.replace([np.inf, -np.inf], np.nan).fillna(0.0).clip(lower=0.0)
+    row_sums = probs.sum(axis=1)
+    valid = row_sums > 0
+    if (~valid).any():
+        probs.loc[~valid, :] = 1.0 / probs.shape[1]
+        row_sums = probs.sum(axis=1)
+    return probs.div(row_sums, axis=0)
+
 def _normalize_sample_weights(sample_weights, index: pd.Index) -> pd.Series:
     """Return non-negative sample weights aligned to index and normalized to sum to 1."""
     if len(index) == 0:
@@ -76,25 +107,52 @@ def _weighted_std(df: pd.DataFrame, sample_weights=None) -> pd.Series:
 
 def _regime_weighted_mean(
     returns_df: pd.DataFrame,
-    regimes: pd.Series,
+    regimes: pd.Series | None,
     probs_next: np.ndarray,
     forecast_mode: str,
     sample_weights=None,
+    regime_probabilities: pd.DataFrame | np.ndarray | None = None,
 ) -> pd.Series:
+    """Expected return vector using hard or soft regime information.
+
+    In soft mode, if `regime_probabilities` is supplied, each regime mean is
+    estimated with fuzzy historical memberships. The final forecast is then the
+    expected value across possible next regimes:
+
+        E[r_{t+1}] = sum_k P(regime_{t+1}=k) * E[r | regime=k]
+    """
     probs = regime_weights(probs_next, forecast_mode)
     full_weights = _normalize_sample_weights(sample_weights, returns_df.index)
+    regime_prob_frame = _normalize_regime_probability_frame(
+        regime_probabilities,
+        returns_df.index,
+        n_regimes=len(probs),
+    )
+
     weighted_sum = pd.Series(0.0, index=returns_df.columns, dtype=float)
     total_weight = 0.0
 
-    for regime, weight in enumerate(probs):
-        if weight <= 0:
+    for regime, next_weight in enumerate(probs):
+        if next_weight <= 0:
             continue
-        subset = returns_df.loc[regimes == regime]
-        if subset.empty:
-            continue
-        subset_weights = full_weights.loc[subset.index]
-        weighted_sum = weighted_sum.add(_weighted_mean(subset, subset_weights) * weight, fill_value=0.0)
-        total_weight += float(weight)
+
+        if regime_prob_frame is not None:
+            membership = regime_prob_frame.iloc[:, regime]
+            effective_weights = full_weights * membership
+            if float(effective_weights.sum()) <= 0:
+                continue
+            regime_mean = _weighted_mean(returns_df, effective_weights)
+        else:
+            if regimes is None:
+                continue
+            subset = returns_df.loc[regimes == regime]
+            if subset.empty:
+                continue
+            subset_weights = full_weights.loc[subset.index]
+            regime_mean = _weighted_mean(subset, subset_weights)
+
+        weighted_sum = weighted_sum.add(regime_mean * next_weight, fill_value=0.0)
+        total_weight += float(next_weight)
 
     if total_weight <= 0:
         return _weighted_mean(returns_df, full_weights)
@@ -103,25 +161,44 @@ def _regime_weighted_mean(
 
 def _regime_weighted_std(
     returns_df: pd.DataFrame,
-    regimes: pd.Series,
+    regimes: pd.Series | None,
     probs_next: np.ndarray,
     forecast_mode: str,
     sample_weights=None,
+    regime_probabilities: pd.DataFrame | np.ndarray | None = None,
 ) -> pd.Series:
     probs = regime_weights(probs_next, forecast_mode)
     full_weights = _normalize_sample_weights(sample_weights, returns_df.index)
+    regime_prob_frame = _normalize_regime_probability_frame(
+        regime_probabilities,
+        returns_df.index,
+        n_regimes=len(probs),
+    )
+
     weighted_sum = pd.Series(0.0, index=returns_df.columns, dtype=float)
     total_weight = 0.0
 
-    for regime, weight in enumerate(probs):
-        if weight <= 0:
+    for regime, next_weight in enumerate(probs):
+        if next_weight <= 0:
             continue
-        subset = returns_df.loc[regimes == regime]
-        if subset.empty:
-            continue
-        subset_weights = full_weights.loc[subset.index]
-        weighted_sum = weighted_sum.add(_weighted_std(subset, subset_weights) * weight, fill_value=0.0)
-        total_weight += float(weight)
+
+        if regime_prob_frame is not None:
+            membership = regime_prob_frame.iloc[:, regime]
+            effective_weights = full_weights * membership
+            if float(effective_weights.sum()) <= 0:
+                continue
+            regime_std = _weighted_std(returns_df, effective_weights)
+        else:
+            if regimes is None:
+                continue
+            subset = returns_df.loc[regimes == regime]
+            if subset.empty:
+                continue
+            subset_weights = full_weights.loc[subset.index]
+            regime_std = _weighted_std(subset, subset_weights)
+
+        weighted_sum = weighted_sum.add(regime_std * next_weight, fill_value=0.0)
+        total_weight += float(next_weight)
 
     if total_weight <= 0:
         return _weighted_std(returns_df, full_weights)
@@ -130,13 +207,28 @@ def _regime_weighted_std(
 
 def forecast_naive_sharpe(
     returns_df: pd.DataFrame,
-    regimes: pd.Series,
+    regimes: pd.Series | None,
     probs_next: np.ndarray,
     forecast_mode: str = "soft",
     sample_weights=None,
+    regime_probabilities: pd.DataFrame | np.ndarray | None = None,
 ) -> pd.Series:
-    mu = _regime_weighted_mean(returns_df, regimes, probs_next, forecast_mode, sample_weights=sample_weights)
-    sigma = _regime_weighted_std(returns_df, regimes, probs_next, forecast_mode, sample_weights=sample_weights).replace(0, 1e-8)
+    mu = _regime_weighted_mean(
+        returns_df,
+        regimes,
+        probs_next,
+        forecast_mode,
+        sample_weights=sample_weights,
+        regime_probabilities=regime_probabilities,
+    )
+    sigma = _regime_weighted_std(
+        returns_df,
+        regimes,
+        probs_next,
+        forecast_mode,
+        sample_weights=sample_weights,
+        regime_probabilities=regime_probabilities,
+    ).replace(0, 1e-8)
     return mu / sigma
 
 
@@ -217,11 +309,12 @@ def predict_ridge(
 
 def forecast_black_litterman_scores(
     returns_df: pd.DataFrame,
-    regimes: pd.Series,
+    regimes: pd.Series | None,
     probs_next: np.ndarray,
     tau: float = BLACK_LITTERMAN_TAU,
     forecast_mode: str = "soft",
     sample_weights=None,
+    regime_probabilities: pd.DataFrame | np.ndarray | None = None,
 ) -> pd.Series:
     mu_prior = _weighted_mean(returns_df, sample_weights).to_numpy()
     sigma = _weighted_cov(returns_df, sample_weights).to_numpy(copy=True)
@@ -233,6 +326,7 @@ def forecast_black_litterman_scores(
         probs_next,
         forecast_mode,
         sample_weights=sample_weights,
+        regime_probabilities=regime_probabilities,
     ).to_numpy()
 
     tau_sigma = tau * sigma
@@ -244,8 +338,35 @@ def forecast_black_litterman_scores(
     return pd.Series(posterior, index=returns_df.columns)
 
 
-def forecast_mvo_scores(returns_df: pd.DataFrame, sample_weights=None) -> pd.Series:
-    mu = _weighted_mean(returns_df, sample_weights).to_numpy()
+def forecast_mvo_scores(
+    returns_df: pd.DataFrame,
+    regimes: pd.Series | None = None,
+    probs_next: np.ndarray | None = None,
+    forecast_mode: str = "soft",
+    sample_weights=None,
+    regime_probabilities: pd.DataFrame | np.ndarray | None = None,
+) -> pd.Series:
+    """Mean-variance scores using expected regime-weighted returns.
+
+    If regimes and next-regime probabilities are supplied, the expected return
+    vector is blended across regimes. In soft mode this is a probability-weighted
+    expected value; in hard mode it uses only the most likely next regime.
+    The covariance matrix is still estimated from the full rolling window for
+    stability.
+    """
+    if regimes is not None and probs_next is not None:
+        mu_series = _regime_weighted_mean(
+            returns_df,
+            regimes,
+            probs_next,
+            forecast_mode,
+            sample_weights=sample_weights,
+            regime_probabilities=regime_probabilities,
+        )
+    else:
+        mu_series = _weighted_mean(returns_df, sample_weights)
+
+    mu = mu_series.to_numpy()
     sigma = _weighted_cov(returns_df, sample_weights).to_numpy(copy=True) + np.eye(returns_df.shape[1]) * 1e-6
     scores = np.linalg.pinv(sigma) @ mu
     return pd.Series(scores, index=returns_df.columns)

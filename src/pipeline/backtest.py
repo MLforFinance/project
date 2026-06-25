@@ -4,7 +4,23 @@ import numpy as np
 import pandas as pd
 
 from .analytics import build_metrics_table
-from .config import DEFAULT_FORECAST_MODE, DEFAULT_L_VALUES, DEFAULT_SIZING_MODES, DEFAULT_TRANSACTION_COST_BPS, MODEL_FAMILIES, RANDOM_SEED
+from .config import (
+    DEFAULT_CASH_TICKER,
+    DEFAULT_ENABLE_CASH_ASSET,
+    DEFAULT_ENABLE_DYNAMIC_RISK_OVERLAY,
+    DEFAULT_FIXED_OVERLAY_EXPOSURE,
+    DEFAULT_FORECAST_MODE,
+    DEFAULT_L_VALUES,
+    DEFAULT_OVERLAY_HARD_DRAWDOWN,
+    DEFAULT_OVERLAY_HARD_EXPOSURE,
+    DEFAULT_OVERLAY_LOOKBACK_MONTHS,
+    DEFAULT_OVERLAY_SOFT_DRAWDOWN,
+    DEFAULT_OVERLAY_SOFT_EXPOSURE,
+    DEFAULT_SIZING_MODES,
+    DEFAULT_TRANSACTION_COST_BPS,
+    MODEL_FAMILIES,
+    RANDOM_SEED,
+)
 from .forecasting import (
     compute_random_regime_state,
     forecast_black_litterman_scores,
@@ -14,7 +30,7 @@ from .forecasting import (
     regime_weights,
     train_ridge_models,
 )
-from .portfolio import evolve_weights, position_weights, standardize_scores, traded_notional, transaction_cost
+from .portfolio import add_cash_asset, apply_fixed_risk_overlay, evolve_weights, position_weights, standardize_scores, traded_notional, transaction_cost
 from .regime_pipeline import compute_transition_matrix, compute_window_regime_state, next_regime_probs, renormalize_probabilities
 from .reporting import flatten_panel
 
@@ -42,6 +58,42 @@ def _strategy_name(family: str, mode: str, l_value: int, forecast_mode: str, inc
     return f"{base}__{forecast_mode}" if include_suffix else base
 
 
+def recent_drawdown_overlay_exposure(
+    return_records: list[tuple[pd.Timestamp, float]],
+    lookback_months: int = DEFAULT_OVERLAY_LOOKBACK_MONTHS,
+    soft_drawdown: float = DEFAULT_OVERLAY_SOFT_DRAWDOWN,
+    hard_drawdown: float = DEFAULT_OVERLAY_HARD_DRAWDOWN,
+    soft_exposure: float = DEFAULT_OVERLAY_SOFT_EXPOSURE,
+    hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
+) -> tuple[float, float]:
+    """Return (exposure, recent_max_drawdown) using only past strategy returns.
+
+    Rules:
+    - not enough history: 100% exposure
+    - recent max drawdown <= hard_drawdown: hard_exposure
+    - recent max drawdown <= soft_drawdown: soft_exposure
+    - otherwise: 100% exposure
+
+    Drawdown is measured on the last `lookback_months` already-realized net
+    strategy returns. The current month is not included, so there is no
+    look-ahead bias.
+    """
+    lookback_months = int(lookback_months)
+    if lookback_months <= 0 or len(return_records) < lookback_months:
+        return 1.0, 0.0
+
+    recent = pd.Series([ret for _, ret in return_records[-lookback_months:]], dtype=float)
+    equity = pd.concat([pd.Series([1.0]), (1.0 + recent).cumprod()], ignore_index=True)
+    drawdown = equity / equity.cummax() - 1.0
+    recent_max_drawdown = float(drawdown.min())
+
+    if recent_max_drawdown <= float(hard_drawdown):
+        return float(hard_exposure), recent_max_drawdown
+    if recent_max_drawdown <= float(soft_drawdown):
+        return float(soft_exposure), recent_max_drawdown
+    return 1.0, recent_max_drawdown
+
+
 def run_walk_forward_backtest(
     X_full: pd.DataFrame,
     Y_targets: pd.DataFrame,
@@ -53,13 +105,29 @@ def run_walk_forward_backtest(
     sizing_modes: tuple[str, ...] = DEFAULT_SIZING_MODES,
     transaction_cost_bps: float = DEFAULT_TRANSACTION_COST_BPS,
     forecast_mode: str = DEFAULT_FORECAST_MODE,
+    enable_cash_asset: bool = DEFAULT_ENABLE_CASH_ASSET,
+    fixed_overlay_exposure: float = DEFAULT_FIXED_OVERLAY_EXPOSURE,
+    cash_ticker: str = DEFAULT_CASH_TICKER,
+    enable_dynamic_risk_overlay: bool = DEFAULT_ENABLE_DYNAMIC_RISK_OVERLAY,
+    overlay_lookback_months: int = DEFAULT_OVERLAY_LOOKBACK_MONTHS,
+    overlay_soft_drawdown: float = DEFAULT_OVERLAY_SOFT_DRAWDOWN,
+    overlay_hard_drawdown: float = DEFAULT_OVERLAY_HARD_DRAWDOWN,
+    overlay_soft_exposure: float = DEFAULT_OVERLAY_SOFT_EXPOSURE,
+    overlay_hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
 ) -> dict[str, object]:
     if len(X_full) < window_size:
         raise ValueError(f"Not enough aligned observations. Need at least {window_size} rows to start. Found {len(X_full)} rows.")
 
     n_regimes = regime_count + 1
+    risky_asset_columns = list(Y_targets.columns)
+    dynamic_overlay_enabled = bool(enable_dynamic_risk_overlay)
+    fixed_overlay_enabled = float(fixed_overlay_exposure) < 1.0
+    cash_enabled = bool(enable_cash_asset or dynamic_overlay_enabled or fixed_overlay_enabled)
+    if cash_enabled and cash_ticker not in Y_targets.columns:
+        Y_targets = Y_targets.copy()
+        Y_targets[cash_ticker] = 0.0
     asset_columns = list(Y_targets.columns)
-    benchmark_col = "SPY" if "SPY" in asset_columns else asset_columns[0]
+    benchmark_col = "SPY" if "SPY" in risky_asset_columns else risky_asset_columns[0]
     rng = np.random.default_rng(RANDOM_SEED)
     cost_rate = float(transaction_cost_bps) / 10000.0
     forecast_modes = _forecast_modes_to_run(forecast_mode)
@@ -71,15 +139,18 @@ def run_walk_forward_backtest(
     strategy_predictions: dict[str, list[pd.Series]] = {}
     strategy_turnover: dict[str, list[tuple[pd.Timestamp, float]]] = {}
     strategy_transaction_costs: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    strategy_overlay_exposures: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    strategy_overlay_drawdowns: dict[str, list[tuple[pd.Timestamp, float]]] = {}
 
     previous_strategy_weights: dict[str, pd.Series] = {}
     previous_realized_returns: pd.Series | None = None
 
     benchmark_templates = {
         "SPY_buy_and_hold": pd.Series(0.0, index=asset_columns, dtype=float),
-        "equal_weight_benchmark": pd.Series(1.0 / len(asset_columns), index=asset_columns, dtype=float),
+        "equal_weight_benchmark": pd.Series(0.0, index=asset_columns, dtype=float),
     }
     benchmark_templates["SPY_buy_and_hold"].loc[benchmark_col] = 1.0
+    benchmark_templates["equal_weight_benchmark"].loc[risky_asset_columns] = 1.0 / len(risky_asset_columns)
     benchmark_gross_returns = {name: [] for name in benchmark_templates}
     benchmark_net_returns = {name: [] for name in benchmark_templates}
     benchmark_turnover = {name: [] for name in benchmark_templates}
@@ -95,7 +166,9 @@ def run_walk_forward_backtest(
         regime_state = compute_window_regime_state(X_window, regime_count=regime_count)
         R_window = regime_state["regimes"]
         P_window = regime_state["probabilities"]
-        E_window = compute_transition_matrix(R_window, n_regimes)
+        # Use soft regime probabilities for expected transition counts.
+        # The previous hard-label version ignored most of the soft-clustering information here.
+        E_window = compute_transition_matrix(P_window, n_regimes)
         current_probs = renormalize_probabilities(P_window.iloc[-1].to_numpy())
         p_next = next_regime_probs(current_probs, E_window.to_numpy())
 
@@ -112,7 +185,9 @@ def run_walk_forward_backtest(
         time_weights = time_weights / time_weights.sum()
 
         R_train = R_window.iloc[:-1]
+        P_train = P_window.iloc[:-1]
         R_random_train = random_regimes.iloc[:-1]
+        P_random_train = random_probs.iloc[:-1]
         X_current = X_window.iloc[-1]
         ridge_models = train_ridge_models(X_train, Y_train, R_train, n_regimes, alpha=ridge_alpha, sample_weights=time_weights)
         ridge_random_models = train_ridge_models(X_train, Y_train, R_random_train, n_regimes, alpha=ridge_alpha, sample_weights=time_weights)
@@ -120,13 +195,59 @@ def run_walk_forward_backtest(
         forecast_payloads: dict[str, tuple[dict[str, pd.Series], dict[str, pd.Series]]] = {}
         for active_forecast_mode in forecast_modes:
             family_scores = {
-                "naive": standardize_scores(forecast_naive_sharpe(Y_train, R_train, p_next, forecast_mode=active_forecast_mode, sample_weights=time_weights), Y_targets.columns),
-                "naive_random": standardize_scores(forecast_naive_sharpe(Y_train, R_random_train, p_next_random, forecast_mode=active_forecast_mode, sample_weights=time_weights), Y_targets.columns),
-                "black_litterman": standardize_scores(forecast_black_litterman_scores(Y_train, R_train, p_next, forecast_mode=active_forecast_mode, sample_weights=time_weights), Y_targets.columns),
-                "mvo": standardize_scores(forecast_mvo_scores(Y_train, sample_weights=time_weights), Y_targets.columns),
+                "naive": standardize_scores(
+                    forecast_naive_sharpe(
+                        Y_train,
+                        R_train,
+                        p_next,
+                        forecast_mode=active_forecast_mode,
+                        sample_weights=time_weights,
+                        regime_probabilities=P_train,
+                    ),
+                    Y_targets.columns,
+                ),
+                "naive_random": standardize_scores(
+                    forecast_naive_sharpe(
+                        Y_train,
+                        R_random_train,
+                        p_next_random,
+                        forecast_mode=active_forecast_mode,
+                        sample_weights=time_weights,
+                        regime_probabilities=P_random_train,
+                    ),
+                    Y_targets.columns,
+                ),
+                "black_litterman": standardize_scores(
+                    forecast_black_litterman_scores(
+                        Y_train,
+                        R_train,
+                        p_next,
+                        forecast_mode=active_forecast_mode,
+                        sample_weights=time_weights,
+                        regime_probabilities=P_train,
+                    ),
+                    Y_targets.columns,
+                ),
+                "mvo": standardize_scores(
+                    forecast_mvo_scores(
+                        Y_train,
+                        R_train,
+                        p_next,
+                        forecast_mode=active_forecast_mode,
+                        sample_weights=time_weights,
+                        regime_probabilities=P_train,
+                    ),
+                    Y_targets.columns,
+                ),
                 "ridge": standardize_scores(pd.Series(predict_ridge(ridge_models, X_current, p_next, n_regimes, forecast_mode=active_forecast_mode), index=Y_targets.columns), Y_targets.columns),
                 "ridge_random": standardize_scores(pd.Series(predict_ridge(ridge_random_models, X_current, p_next_random, n_regimes, forecast_mode=active_forecast_mode), index=Y_targets.columns), Y_targets.columns),
             }
+            if cash_enabled:
+                family_scores = {
+                    family_name: add_cash_asset(scores, cash_ticker=cash_ticker, cash_score=0.0)
+                    for family_name, scores in family_scores.items()
+                }
+
             regime_probability_sets = {
                 "naive": pd.Series(regime_weights(p_next, active_forecast_mode), index=range(n_regimes), dtype=float),
                 "naive_random": pd.Series(regime_weights(p_next_random, active_forecast_mode), index=range(n_regimes), dtype=float),
@@ -144,9 +265,29 @@ def run_walk_forward_backtest(
                     for mode in sizing_modes:
                         strategy = _strategy_name(family, mode, l_value, active_forecast_mode, include_forecast_suffix)
                         weights = position_weights(scores, mode, l_value, regime_probs=regime_probability_sets[family]).astype(float)
+                        if cash_enabled:
+                            weights = weights.reindex(asset_columns).fillna(0.0).astype(float)
+
+                        overlay_exposure = 1.0
+                        overlay_recent_drawdown = 0.0
+                        if dynamic_overlay_enabled:
+                            overlay_exposure, overlay_recent_drawdown = recent_drawdown_overlay_exposure(
+                                strategy_net_returns.get(strategy, []),
+                                lookback_months=overlay_lookback_months,
+                                soft_drawdown=overlay_soft_drawdown,
+                                hard_drawdown=overlay_hard_drawdown,
+                                soft_exposure=overlay_soft_exposure,
+                                hard_exposure=overlay_hard_exposure,
+                            )
+                            weights = apply_fixed_risk_overlay(weights, overlay_exposure, cash_ticker=cash_ticker)
+                        elif fixed_overlay_exposure < 1.0:
+                            overlay_exposure = float(fixed_overlay_exposure)
+                            weights = apply_fixed_risk_overlay(weights, fixed_overlay_exposure, cash_ticker=cash_ticker)
+
+                        weights = weights.reindex(asset_columns).fillna(0.0).astype(float)
                         start_weights = _starting_weights(previous_strategy_weights.get(strategy), previous_realized_returns, asset_columns)
-                        turnover = traded_notional(start_weights, weights)
-                        trading_cost = transaction_cost(start_weights, weights, cost_rate)
+                        turnover = traded_notional(start_weights, weights, cash_ticker=cash_ticker if cash_enabled else None)
+                        trading_cost = transaction_cost(start_weights, weights, cost_rate, cash_ticker=cash_ticker if cash_enabled else None)
                         gross_return = float(np.dot(weights.to_numpy(), realized_returns.to_numpy()))
                         net_return = gross_return - trading_cost
 
@@ -154,14 +295,16 @@ def run_walk_forward_backtest(
                         strategy_net_returns.setdefault(strategy, []).append((realized_date, net_return))
                         strategy_turnover.setdefault(strategy, []).append((realized_date, turnover))
                         strategy_transaction_costs.setdefault(strategy, []).append((realized_date, trading_cost))
+                        strategy_overlay_exposures.setdefault(strategy, []).append((realized_date, overlay_exposure))
+                        strategy_overlay_drawdowns.setdefault(strategy, []).append((realized_date, overlay_recent_drawdown))
                         strategy_weights.setdefault(strategy, []).append(pd.Series(weights, name=realized_date))
                         strategy_predictions.setdefault(strategy, []).append(pd.Series(scores, name=realized_date))
                         previous_strategy_weights[strategy] = weights
 
         for benchmark_name, target_weights in benchmark_templates.items():
             start_weights = _starting_weights(previous_benchmark_weights.get(benchmark_name), previous_realized_returns, asset_columns)
-            turnover = traded_notional(start_weights, target_weights)
-            trading_cost = transaction_cost(start_weights, target_weights, cost_rate)
+            turnover = traded_notional(start_weights, target_weights, cash_ticker=cash_ticker if cash_enabled else None)
+            trading_cost = transaction_cost(start_weights, target_weights, cost_rate, cash_ticker=cash_ticker if cash_enabled else None)
             gross_return = float(np.dot(target_weights.to_numpy(), realized_returns.to_numpy()))
             net_return = gross_return - trading_cost
             benchmark_gross_returns[benchmark_name].append((realized_date, gross_return))
@@ -192,6 +335,14 @@ def run_walk_forward_backtest(
     transaction_costs_df = pd.DataFrame(transaction_cost_records).sort_index()
     transaction_costs_df.index.name = "date"
 
+    overlay_exposure_records = {strategy: pd.Series(dict(records), name=strategy).sort_index() for strategy, records in strategy_overlay_exposures.items()}
+    overlay_exposure_df = pd.DataFrame(overlay_exposure_records).sort_index()
+    overlay_exposure_df.index.name = "date"
+
+    overlay_drawdown_records = {strategy: pd.Series(dict(records), name=strategy).sort_index() for strategy, records in strategy_overlay_drawdowns.items()}
+    overlay_drawdown_df = pd.DataFrame(overlay_drawdown_records).sort_index()
+    overlay_drawdown_df.index.name = "date"
+
     panel_index = pd.Index(portfolio_returns_df.index, name="date")
     weights_panel = {strategy: pd.DataFrame(records, index=panel_index) for strategy, records in strategy_weights.items()}
     predictions_panel = {strategy: pd.DataFrame(records, index=panel_index) for strategy, records in strategy_predictions.items()}
@@ -208,6 +359,8 @@ def run_walk_forward_backtest(
         "gross_portfolio_returns": gross_returns_df,
         "turnover": turnover_df,
         "transaction_costs": transaction_costs_df,
+        "overlay_exposures": overlay_exposure_df,
+        "overlay_recent_drawdowns": overlay_drawdown_df,
         "weights": flatten_panel(weights_panel),
         "predictions": flatten_panel(predictions_panel),
         "metrics_table": metrics_table,
@@ -215,4 +368,14 @@ def run_walk_forward_backtest(
         "transaction_cost_bps": float(transaction_cost_bps),
         "forecast_mode": forecast_mode,
         "forecast_modes_evaluated": list(forecast_modes),
+        "cash_ticker": cash_ticker if cash_enabled else None,
+        "fixed_overlay_exposure": float(fixed_overlay_exposure),
+        "dynamic_risk_overlay_enabled": dynamic_overlay_enabled,
+        "dynamic_risk_overlay_rules": {
+            "lookback_months": int(overlay_lookback_months),
+            "soft_drawdown": float(overlay_soft_drawdown),
+            "soft_exposure": float(overlay_soft_exposure),
+            "hard_drawdown": float(overlay_hard_drawdown),
+            "hard_exposure": float(overlay_hard_exposure),
+        },
     }

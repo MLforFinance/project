@@ -43,12 +43,28 @@ def plot_pca_clusters(reduced_df: pd.DataFrame, regimes: pd.Series, output_path:
     plt.close(fig)
 
 
-def compute_transition_matrix(regimes: pd.Series, n_regimes: int) -> pd.DataFrame:
+def compute_transition_matrix(regime_state: pd.Series | pd.DataFrame, n_regimes: int) -> pd.DataFrame:
+    """Estimate regime transition probabilities.
+
+    If `regime_state` is a Series of hard labels, this is the usual hard
+    transition count. If it is a DataFrame of soft regime probabilities, this
+    computes expected transition counts using outer products p_t * p_{t+1}.
+    """
     transitions = pd.DataFrame(0.0, index=range(n_regimes), columns=range(n_regimes))
-    for t in range(len(regimes) - 1):
-        i = int(regimes.iloc[t])
-        j = int(regimes.iloc[t + 1])
-        transitions.loc[i, j] += 1.0
+
+    if isinstance(regime_state, pd.DataFrame):
+        probs = regime_state.iloc[:, :n_regimes].to_numpy(dtype=float)
+        for t in range(len(probs) - 1):
+            p_t = renormalize_probabilities(probs[t])
+            p_next = renormalize_probabilities(probs[t + 1])
+            transitions += np.outer(p_t, p_next)
+    else:
+        regimes = regime_state
+        for t in range(len(regimes) - 1):
+            i = int(regimes.iloc[t])
+            j = int(regimes.iloc[t + 1])
+            transitions.loc[i, j] += 1.0
+
     return transitions.div(transitions.sum(axis=1), axis=0).fillna(0.0)
 
 
@@ -64,15 +80,12 @@ def next_regime_probs(current_probs: np.ndarray, transition_matrix: np.ndarray) 
     return renormalize_probabilities(current_probs) @ np.asarray(transition_matrix, dtype=float)
 
 def compute_window_regime_state(X_window: pd.DataFrame, regime_count: int) -> dict[str, pd.DataFrame | pd.Series]:
-    regimes, pred_isolation, pred_kmeans, kmeans_centers, index_least_freq = Isolation_Euclidean_KMeans(
+    regimes, pred_isolation, pred_kmeans, kmeans_centers, index_least_freq, probs = Isolation_Euclidean_KMeans(
         X_window,
         r=regime_count,
     )
 
     prob_columns = [f"regime_prob_{i}" for i in range(regime_count + 1)]
-
-    probs = np.zeros((len(regimes), regime_count + 1), dtype=float)
-    probs[np.arange(len(regimes)), regimes] = 1.0
 
     return {
         "regimes": pd.Series(regimes, index=X_window.index, name="regime"),
