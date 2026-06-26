@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Iterable, Literal, Protocol
 
 import numpy as np
@@ -79,7 +80,8 @@ class FredFeatureBuilder:
         self.series = list(series)
         if not self.series:
             raise ValueError("At least one FRED series must be configured.")
-        self.fred = fred or Fred(api_key=api_key)
+        self.fred = fred
+        self.api_key = api_key or os.environ.get("FRED_API_KEY")
         self.standardize = standardize
         self.drop_missing = drop_missing
         self.scaler: StandardScaler | None = None
@@ -94,15 +96,20 @@ class FredFeatureBuilder:
     ) -> pd.DataFrame:
         """Fetch configured FRED series and convert them to monthly rows."""
 
+        if self.fred is None:
+            self.fred = Fred(api_key=self.api_key)
+
+        request_args = {
+            "observation_start": observation_start,
+            "observation_end": observation_end,
+        }
+        if vintage_date is not None:
+            request_args["realtime_start"] = vintage_date
+            request_args["realtime_end"] = vintage_date
+
         monthly_series = []
         for spec in self.series:
-            values = self.fred.get_series(
-                spec.series_id,
-                observation_start=observation_start,
-                observation_end=observation_end,
-                realtime_start=vintage_date,
-                realtime_end=vintage_date,
-            )
+            values = self.fred.get_series(spec.series_id, **request_args)
             monthly = to_monthly(
                 values,
                 frequency=spec.frequency,
@@ -243,3 +250,47 @@ def apply_transformation(series: pd.Series, transformation: Transformation) -> p
     if transformation == "yoy_log_diff":
         return np.log(x).diff(12)
     raise ValueError(f"Unsupported transformation: {transformation}")
+
+
+def default_fredmd_representative_series() -> list[FredSeriesSpec]:
+    """A compact FRED-MD-inspired macro feature set.
+
+    This is not the full FRED-MD panel. It is a small representative basket for
+    first-pass regime modeling: activity, labor, housing, consumption, prices,
+    money/credit, and rates. Transformations are chosen to make most series more
+    stationary before standard scaling.
+    """
+
+    return [
+        # Output / income / production
+        FredSeriesSpec("RPI", transformation="log_diff", frequency="monthly"),
+        FredSeriesSpec("INDPRO", transformation="log_diff", frequency="monthly"),
+        FredSeriesSpec("CUMFNS", transformation="diff", frequency="monthly"),
+
+        # Labor market
+        FredSeriesSpec("PAYEMS", transformation="log_diff", frequency="monthly"),
+        FredSeriesSpec("UNRATE", transformation="diff", frequency="monthly"),
+        FredSeriesSpec("ICSA", transformation="log_diff", frequency="daily_or_weekly", monthly_aggregation="mean"),
+
+        # Housing
+        FredSeriesSpec("HOUST", transformation="log_diff", frequency="monthly"),
+        FredSeriesSpec("PERMIT", transformation="log_diff", frequency="monthly"),
+
+        # Consumption / orders
+        FredSeriesSpec("RSAFS", transformation="log_diff", frequency="monthly"),
+        FredSeriesSpec("DGORDER", transformation="log_diff", frequency="monthly"),
+
+        # Prices
+        FredSeriesSpec("CPIAUCSL", transformation="yoy_log_diff", frequency="monthly"),
+        FredSeriesSpec("PCEPI", transformation="yoy_log_diff", frequency="monthly"),
+        FredSeriesSpec("PPIACO", transformation="yoy_log_diff", frequency="monthly"),
+
+        # Money / credit
+        FredSeriesSpec("M2SL", transformation="log_diff", frequency="monthly"),
+        FredSeriesSpec("BUSLOANS", transformation="log_diff", frequency="daily_or_weekly", monthly_aggregation="mean"),
+
+        # Rates / spreads
+        FredSeriesSpec("FEDFUNDS", transformation="level", frequency="monthly"),
+        FredSeriesSpec("GS10", transformation="level", frequency="monthly"),
+        FredSeriesSpec("T10Y3M", transformation="level", frequency="daily_or_weekly", monthly_aggregation="mean"),
+    ]
