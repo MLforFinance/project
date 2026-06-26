@@ -8,10 +8,13 @@ version = "0.1.0"
 description = "A minimal macroeconomic prediction project."
 readme = "README.md"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+    "fredapi",
+    "numpy",
+    "pandas",
+    "scikit-learn",
+]
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]
