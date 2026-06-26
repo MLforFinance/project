@@ -45,6 +45,23 @@ test_features = builder.transform(test_raw)
 
 Passing `vintage_date` sends it to FRED as both `realtime_start` and `realtime_end`, so later pipeline steps can use data as available at that vintage date.
 
+## Gaussian HMM regimes
+
+After building transformed and standardized FRED features, fit a 3-regime Gaussian HMM with `hmmlearn`:
+
+```python
+from macro_prediction.hmm import GaussianHMMRegimeModel
+
+hmm = GaussianHMMRegimeModel(n_regimes=3, random_state=42)
+result = hmm.fit_predict(features)
+
+regime_by_month = result.regimes
+regime_probabilities = result.probabilities
+next_month_probabilities = hmm.predict_next(features)
+```
+
+`result.regimes` is the max-probability regime for each month. `result.probabilities` keeps the full regime probability vector for each month.
+
 ## Setup
 
 ```bash
