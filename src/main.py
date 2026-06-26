@@ -37,6 +37,8 @@ def main() -> None:
         overlay_hard_drawdown=args.overlay_hard_drawdown,
         overlay_soft_exposure=args.overlay_soft_exposure,
         overlay_hard_exposure=args.overlay_hard_exposure,
+        overlay_good_probability_threshold=args.overlay_good_probability_threshold,
+        overlay_good_regime_count=args.overlay_good_regime_count,
         random_state=args.random_state,
     )
 
@@ -53,6 +55,8 @@ def main() -> None:
         print(f"Transaction costs saved to: {results['backtest_paths']['transaction_costs']}")
         print(f"Overlay exposures saved to: {results['backtest_paths']['overlay_exposures']}")
         print(f"Overlay recent drawdowns saved to: {results['backtest_paths']['overlay_recent_drawdowns']}")
+        print(f"Overlay good-regime probabilities saved to: {results['backtest_paths']['overlay_good_probabilities']}")
+        print(f"Overlay actions saved to: {results['backtest_paths']['overlay_actions']}")
         print(f"Weights saved to: {results['backtest_paths']['weights']}")
         print(f"Predictions saved to: {results['backtest_paths']['predictions']}")
         print(f"Metrics saved to: {results['backtest_paths']['metrics']}")

@@ -32,6 +32,8 @@ from .config import (
     DEFAULT_FIXED_OVERLAY_EXPOSURE,
     DEFAULT_OVERLAY_HARD_DRAWDOWN,
     DEFAULT_OVERLAY_HARD_EXPOSURE,
+    DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
+    DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
     DEFAULT_OVERLAY_LOOKBACK_MONTHS,
     DEFAULT_OVERLAY_SOFT_DRAWDOWN,
     DEFAULT_OVERLAY_SOFT_EXPOSURE,
@@ -82,6 +84,8 @@ def run_pipeline(
     overlay_hard_drawdown: float = DEFAULT_OVERLAY_HARD_DRAWDOWN,
     overlay_soft_exposure: float = DEFAULT_OVERLAY_SOFT_EXPOSURE,
     overlay_hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
+    overlay_good_probability_threshold: float = DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
+    overlay_good_regime_count: int = DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
     asset_returns_df: pd.DataFrame | None = None,
     random_state: int = DEFAULT_RANDOM_STATE,
 ) -> dict[str, object]:
@@ -161,6 +165,8 @@ def run_pipeline(
             overlay_hard_drawdown=overlay_hard_drawdown,
             overlay_soft_exposure=overlay_soft_exposure,
             overlay_hard_exposure=overlay_hard_exposure,
+            overlay_good_probability_threshold=overlay_good_probability_threshold,
+            overlay_good_regime_count=overlay_good_regime_count,
         )
         backtest_results["portfolio_returns"].to_csv(backtest_paths["portfolio_returns"])
         backtest_results["gross_portfolio_returns"].to_csv(backtest_paths["gross_portfolio_returns"])
@@ -168,6 +174,8 @@ def run_pipeline(
         backtest_results["transaction_costs"].to_csv(backtest_paths["transaction_costs"])
         backtest_results["overlay_exposures"].to_csv(backtest_paths["overlay_exposures"])
         backtest_results["overlay_recent_drawdowns"].to_csv(backtest_paths["overlay_recent_drawdowns"])
+        backtest_results["overlay_good_probabilities"].to_csv(backtest_paths["overlay_good_probabilities"])
+        backtest_results["overlay_actions"].to_csv(backtest_paths["overlay_actions"])
         backtest_results["weights"].to_csv(backtest_paths["weights"])
         backtest_results["predictions"].to_csv(backtest_paths["predictions"])
         backtest_results["metrics_table"].to_csv(backtest_paths["metrics_table"], index=False)
@@ -263,16 +271,18 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--ridge-alpha", type=float, default=1.0, help="Ridge regularization strength.")
     parser.add_argument("--transaction-cost-bps", type=float, default=DEFAULT_TRANSACTION_COST_BPS, help="One-way transaction cost in basis points applied to monthly traded notional.")
     parser.add_argument("--forecast-mode", choices=FORECAST_MODE_CHOICES, default=DEFAULT_FORECAST_MODE, help="How to use regime probabilities in forecasting: hard picks the top regime, soft blends by probabilities, both runs both variants for comparison.")
-    parser.add_argument("--cash-asset", action="store_true", help="Enable the synthetic 0%-return CASH asset. Disabled by default for the pure soft-regime specification.")
-    parser.add_argument("--no-cash-asset", action="store_true", help="Keep the synthetic 0%-return CASH asset disabled. This is the default and is kept for backward compatibility.")
+    parser.add_argument("--cash-asset", action="store_true", help="Enable the synthetic 0%%-return CASH asset. Disabled by default for the pure soft-regime specification.")
+    parser.add_argument("--no-cash-asset", action="store_true", help="Keep the synthetic 0%%-return CASH asset disabled. This is the default and is kept for backward compatibility.")
     parser.add_argument("--fixed-overlay-exposure", type=float, default=DEFAULT_FIXED_OVERLAY_EXPOSURE, help="Fixed risky-asset exposure after portfolio construction. Default 1.0 means no fixed risk overlay.")
     parser.add_argument("--cash-ticker", default=DEFAULT_CASH_TICKER, help="Ticker/name used for the synthetic cash asset.")
-    parser.add_argument("--dynamic-risk-overlay", action="store_true", default=DEFAULT_ENABLE_DYNAMIC_RISK_OVERLAY, help="Enable a drawdown-based dynamic risk overlay. This automatically enables synthetic 0%-return cash for the residual allocation.")
+    parser.add_argument("--dynamic-risk-overlay", action="store_true", default=DEFAULT_ENABLE_DYNAMIC_RISK_OVERLAY, help="Enable a drawdown-based dynamic risk overlay. This automatically enables synthetic 0%%-return cash for the residual allocation.")
     parser.add_argument("--overlay-lookback-months", type=int, default=DEFAULT_OVERLAY_LOOKBACK_MONTHS, help="Number of past monthly strategy returns used to compute recent drawdown for the dynamic overlay.")
     parser.add_argument("--overlay-soft-drawdown", type=float, default=DEFAULT_OVERLAY_SOFT_DRAWDOWN, help="Recent max drawdown threshold that reduces exposure to --overlay-soft-exposure.")
     parser.add_argument("--overlay-hard-drawdown", type=float, default=DEFAULT_OVERLAY_HARD_DRAWDOWN, help="Recent max drawdown threshold that reduces exposure to --overlay-hard-exposure.")
     parser.add_argument("--overlay-soft-exposure", type=float, default=DEFAULT_OVERLAY_SOFT_EXPOSURE, help="Risky-asset exposure after the soft drawdown threshold is breached.")
     parser.add_argument("--overlay-hard-exposure", type=float, default=DEFAULT_OVERLAY_HARD_EXPOSURE, help="Risky-asset exposure after the hard drawdown threshold is breached.")
+    parser.add_argument("--overlay-good-probability-threshold", type=float, default=DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD, help="If recent drawdown is bad but probability of the good-regime group is at least this value, the dynamic overlay immediately returns to 100%% exposure.")
+    parser.add_argument("--overlay-good-regime-count", type=int, default=DEFAULT_OVERLAY_GOOD_REGIME_COUNT, help="Number of highest-ranked regimes treated as the good-regime group. Regimes are ranked every rebalance using expanding-window equal-weight ETF returns.")
     parser.add_argument(
         "--random-state",
         type=int,

@@ -13,6 +13,8 @@ from .config import (
     DEFAULT_L_VALUES,
     DEFAULT_OVERLAY_HARD_DRAWDOWN,
     DEFAULT_OVERLAY_HARD_EXPOSURE,
+    DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
+    DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
     DEFAULT_OVERLAY_LOOKBACK_MONTHS,
     DEFAULT_OVERLAY_SOFT_DRAWDOWN,
     DEFAULT_OVERLAY_SOFT_EXPOSURE,
@@ -58,6 +60,76 @@ def _strategy_name(family: str, mode: str, l_value: int, forecast_mode: str, inc
     return f"{base}__{forecast_mode}" if include_suffix else base
 
 
+
+def _regime_label_to_int(label: object) -> int:
+    """Convert labels such as 0 or 'regime_prob_0' to integer regime ids."""
+    if isinstance(label, (int, np.integer)):
+        return int(label)
+    text = str(label)
+    if text.startswith("regime_prob_"):
+        return int(text.split("regime_prob_", 1)[1])
+    return int(text)
+
+def rank_good_regimes_by_equal_weight_returns(
+    returns: pd.DataFrame,
+    regime_probabilities: pd.DataFrame,
+    risky_asset_columns: list[str],
+    good_regime_count: int = DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
+) -> tuple[set[int], pd.Series]:
+    """Rank regimes using past equal-weight ETF returns.
+
+    The ranking is computed inside the current expanding training window only.
+    For every historical month we first compute the equal-weight average return
+    across all risky ETFs. Then, for each regime, we compute the probability-
+    weighted average of that equal-weight return. This works with soft regime
+    memberships and avoids relying on arbitrary cluster labels.
+
+    Returns
+    -------
+    good_regimes:
+        Set containing the best `good_regime_count` regime labels.
+    regime_scores:
+        Probability-weighted equal-weight return score for every regime.
+    """
+    if regime_probabilities.empty:
+        return set(), pd.Series(dtype=float)
+
+    aligned_returns = returns.reindex(regime_probabilities.index)
+    available_assets = [col for col in risky_asset_columns if col in aligned_returns.columns]
+    if not available_assets:
+        raise ValueError("No risky ETF return columns are available for regime ranking.")
+
+    equal_weight_market_return = aligned_returns[available_assets].astype(float).mean(axis=1)
+    regime_scores: dict[int, float] = {}
+
+    for regime in regime_probabilities.columns:
+        regime_id = _regime_label_to_int(regime)
+        weights = regime_probabilities[regime].astype(float).reindex(equal_weight_market_return.index).fillna(0.0)
+        valid = equal_weight_market_return.notna() & weights.notna()
+        denom = float(weights[valid].sum())
+        if denom <= 0:
+            regime_scores[regime_id] = np.nan
+        else:
+            regime_scores[regime_id] = float((equal_weight_market_return[valid] * weights[valid]).sum() / denom)
+
+    scores = pd.Series(regime_scores, dtype=float).sort_index()
+    valid_scores = scores.dropna()
+    if valid_scores.empty:
+        return set(), scores
+
+    n_good = max(1, min(int(good_regime_count), len(valid_scores)))
+    good_regimes = set(int(regime) for regime in valid_scores.sort_values(ascending=False).head(n_good).index)
+    return good_regimes, scores
+
+
+def regime_good_probability(regime_probabilities: pd.Series | np.ndarray, good_regimes: set[int]) -> float:
+    """Return the probability mass assigned to the current good-regime group."""
+    if not good_regimes:
+        return 0.0
+    probs = pd.Series(regime_probabilities, dtype=float)
+    return float(probs.reindex(sorted(good_regimes)).fillna(0.0).sum())
+
+
 def recent_drawdown_overlay_exposure(
     return_records: list[tuple[pd.Timestamp, float]],
     lookback_months: int = DEFAULT_OVERLAY_LOOKBACK_MONTHS,
@@ -65,33 +137,44 @@ def recent_drawdown_overlay_exposure(
     hard_drawdown: float = DEFAULT_OVERLAY_HARD_DRAWDOWN,
     soft_exposure: float = DEFAULT_OVERLAY_SOFT_EXPOSURE,
     hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
-) -> tuple[float, float]:
-    """Return (exposure, recent_max_drawdown) using only past strategy returns.
+    next_regime_probabilities: pd.Series | np.ndarray | None = None,
+    good_regimes: set[int] | None = None,
+    good_probability_threshold: float = DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
+) -> tuple[float, float, float, str]:
+    """Return overlay decision using past drawdown plus regime re-entry.
 
-    Rules:
-    - not enough history: 100% exposure
-    - recent max drawdown <= hard_drawdown: hard_exposure
-    - recent max drawdown <= soft_drawdown: soft_exposure
-    - otherwise: 100% exposure
+    The base protection rule uses only the last `lookback_months` already-
+    realized net strategy returns, so the current month is not used.
 
-    Drawdown is measured on the last `lookback_months` already-realized net
-    strategy returns. The current month is not included, so there is no
-    look-ahead bias.
+    If recent drawdown is not bad, exposure is 100%.
+    If recent drawdown is bad but the probability of next month belonging to
+    the good-regime group is at least `good_probability_threshold`, exposure
+    returns immediately to 100%. This is the re-entry rule that avoids staying
+    too long in cash during recoveries.
     """
     lookback_months = int(lookback_months)
+    good_probability = 0.0
+    if next_regime_probabilities is not None and good_regimes:
+        good_probability = regime_good_probability(next_regime_probabilities, good_regimes)
+
     if lookback_months <= 0 or len(return_records) < lookback_months:
-        return 1.0, 0.0
+        return 1.0, 0.0, good_probability, "insufficient_history"
 
     recent = pd.Series([ret for _, ret in return_records[-lookback_months:]], dtype=float)
     equity = pd.concat([pd.Series([1.0]), (1.0 + recent).cumprod()], ignore_index=True)
     drawdown = equity / equity.cummax() - 1.0
     recent_max_drawdown = float(drawdown.min())
 
+    if recent_max_drawdown > float(soft_drawdown):
+        return 1.0, recent_max_drawdown, good_probability, "normal_drawdown"
+
+    if good_probability >= float(good_probability_threshold):
+        return 1.0, recent_max_drawdown, good_probability, "good_regime_reentry"
+
     if recent_max_drawdown <= float(hard_drawdown):
-        return float(hard_exposure), recent_max_drawdown
-    if recent_max_drawdown <= float(soft_drawdown):
-        return float(soft_exposure), recent_max_drawdown
-    return 1.0, recent_max_drawdown
+        return float(hard_exposure), recent_max_drawdown, good_probability, "hard_drawdown"
+
+    return float(soft_exposure), recent_max_drawdown, good_probability, "soft_drawdown"
 
 
 def run_walk_forward_backtest(
@@ -114,6 +197,8 @@ def run_walk_forward_backtest(
     overlay_hard_drawdown: float = DEFAULT_OVERLAY_HARD_DRAWDOWN,
     overlay_soft_exposure: float = DEFAULT_OVERLAY_SOFT_EXPOSURE,
     overlay_hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
+    overlay_good_probability_threshold: float = DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
+    overlay_good_regime_count: int = DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
 ) -> dict[str, object]:
     if len(X_full) < window_size:
         raise ValueError(f"Not enough aligned observations. Need at least {window_size} rows to start. Found {len(X_full)} rows.")
@@ -141,6 +226,8 @@ def run_walk_forward_backtest(
     strategy_transaction_costs: dict[str, list[tuple[pd.Timestamp, float]]] = {}
     strategy_overlay_exposures: dict[str, list[tuple[pd.Timestamp, float]]] = {}
     strategy_overlay_drawdowns: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    strategy_overlay_good_probabilities: dict[str, list[tuple[pd.Timestamp, float]]] = {}
+    strategy_overlay_actions: dict[str, list[tuple[pd.Timestamp, str]]] = {}
 
     previous_strategy_weights: dict[str, pd.Series] = {}
     previous_realized_returns: pd.Series | None = None
@@ -188,6 +275,24 @@ def run_walk_forward_backtest(
         P_train = P_window.iloc[:-1]
         R_random_train = random_regimes.iloc[:-1]
         P_random_train = random_probs.iloc[:-1]
+
+        # Regime-aware re-entry ranking for the dynamic overlay.
+        # This is recomputed every rebalance using only the expanding-window past.
+        # Regimes are ranked by the probability-weighted equal-weight average
+        # return across all risky ETFs during that regime.
+        overlay_good_regimes, overlay_regime_scores = rank_good_regimes_by_equal_weight_returns(
+            Y_train,
+            P_train,
+            risky_asset_columns,
+            good_regime_count=overlay_good_regime_count,
+        )
+        overlay_random_good_regimes, overlay_random_regime_scores = rank_good_regimes_by_equal_weight_returns(
+            Y_train,
+            P_random_train,
+            risky_asset_columns,
+            good_regime_count=overlay_good_regime_count,
+        )
+
         X_current = X_window.iloc[-1]
         ridge_models = train_ridge_models(X_train, Y_train, R_train, n_regimes, alpha=ridge_alpha, sample_weights=time_weights)
         ridge_random_models = train_ridge_models(X_train, Y_train, R_random_train, n_regimes, alpha=ridge_alpha, sample_weights=time_weights)
@@ -270,18 +375,25 @@ def run_walk_forward_backtest(
 
                         overlay_exposure = 1.0
                         overlay_recent_drawdown = 0.0
+                        overlay_good_probability = 0.0
+                        overlay_action = "no_overlay"
                         if dynamic_overlay_enabled:
-                            overlay_exposure, overlay_recent_drawdown = recent_drawdown_overlay_exposure(
+                            family_good_regimes = overlay_random_good_regimes if MODEL_FAMILIES[family].get("random_regimes") else overlay_good_regimes
+                            overlay_exposure, overlay_recent_drawdown, overlay_good_probability, overlay_action = recent_drawdown_overlay_exposure(
                                 strategy_net_returns.get(strategy, []),
                                 lookback_months=overlay_lookback_months,
                                 soft_drawdown=overlay_soft_drawdown,
                                 hard_drawdown=overlay_hard_drawdown,
                                 soft_exposure=overlay_soft_exposure,
                                 hard_exposure=overlay_hard_exposure,
+                                next_regime_probabilities=regime_probability_sets[family],
+                                good_regimes=family_good_regimes,
+                                good_probability_threshold=overlay_good_probability_threshold,
                             )
                             weights = apply_fixed_risk_overlay(weights, overlay_exposure, cash_ticker=cash_ticker)
                         elif fixed_overlay_exposure < 1.0:
                             overlay_exposure = float(fixed_overlay_exposure)
+                            overlay_action = "fixed_overlay"
                             weights = apply_fixed_risk_overlay(weights, fixed_overlay_exposure, cash_ticker=cash_ticker)
 
                         weights = weights.reindex(asset_columns).fillna(0.0).astype(float)
@@ -297,6 +409,8 @@ def run_walk_forward_backtest(
                         strategy_transaction_costs.setdefault(strategy, []).append((realized_date, trading_cost))
                         strategy_overlay_exposures.setdefault(strategy, []).append((realized_date, overlay_exposure))
                         strategy_overlay_drawdowns.setdefault(strategy, []).append((realized_date, overlay_recent_drawdown))
+                        strategy_overlay_good_probabilities.setdefault(strategy, []).append((realized_date, overlay_good_probability))
+                        strategy_overlay_actions.setdefault(strategy, []).append((realized_date, overlay_action))
                         strategy_weights.setdefault(strategy, []).append(pd.Series(weights, name=realized_date))
                         strategy_predictions.setdefault(strategy, []).append(pd.Series(scores, name=realized_date))
                         previous_strategy_weights[strategy] = weights
@@ -343,6 +457,14 @@ def run_walk_forward_backtest(
     overlay_drawdown_df = pd.DataFrame(overlay_drawdown_records).sort_index()
     overlay_drawdown_df.index.name = "date"
 
+    overlay_good_probability_records = {strategy: pd.Series(dict(records), name=strategy).sort_index() for strategy, records in strategy_overlay_good_probabilities.items()}
+    overlay_good_probability_df = pd.DataFrame(overlay_good_probability_records).sort_index()
+    overlay_good_probability_df.index.name = "date"
+
+    overlay_action_records = {strategy: pd.Series(dict(records), name=strategy).sort_index() for strategy, records in strategy_overlay_actions.items()}
+    overlay_action_df = pd.DataFrame(overlay_action_records).sort_index()
+    overlay_action_df.index.name = "date"
+
     panel_index = pd.Index(portfolio_returns_df.index, name="date")
     weights_panel = {strategy: pd.DataFrame(records, index=panel_index) for strategy, records in strategy_weights.items()}
     predictions_panel = {strategy: pd.DataFrame(records, index=panel_index) for strategy, records in strategy_predictions.items()}
@@ -361,6 +483,8 @@ def run_walk_forward_backtest(
         "transaction_costs": transaction_costs_df,
         "overlay_exposures": overlay_exposure_df,
         "overlay_recent_drawdowns": overlay_drawdown_df,
+        "overlay_good_probabilities": overlay_good_probability_df,
+        "overlay_actions": overlay_action_df,
         "weights": flatten_panel(weights_panel),
         "predictions": flatten_panel(predictions_panel),
         "metrics_table": metrics_table,
@@ -377,5 +501,8 @@ def run_walk_forward_backtest(
             "soft_exposure": float(overlay_soft_exposure),
             "hard_drawdown": float(overlay_hard_drawdown),
             "hard_exposure": float(overlay_hard_exposure),
+            "good_probability_threshold": float(overlay_good_probability_threshold),
+            "good_regime_count": int(overlay_good_regime_count),
+            "good_regime_ranking": "expanding_window_equal_weight_average_etf_return",
         },
     }
