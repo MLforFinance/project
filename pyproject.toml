@@ -11,6 +11,7 @@ requires-python = ">=3.11"
 dependencies = [
     "fredapi",
     "hmmlearn",
+    "matplotlib",
     "numpy",
     "pandas",
     "scikit-learn",

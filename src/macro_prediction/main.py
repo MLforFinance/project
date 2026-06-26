@@ -21,6 +21,7 @@ from macro_prediction.fred import (
     default_fredmd_representative_series,
 )
 from macro_prediction.hmm import GaussianHMMRegimeModel
+from macro_prediction.plotting import plot_regime_transitions
 
 OBSERVATION_START = "1985-01-01"
 OBSERVATION_END = None
@@ -168,6 +169,11 @@ def save_prediction_run(run: PredictionRun) -> None:
     run.predictions.to_csv(OUTPUT_DIR / f"{run.mode}_walk_forward_predictions.csv")
     run.latest_next_month.to_frame("probability").to_csv(
         OUTPUT_DIR / f"{run.mode}_latest_next_month_probabilities.csv"
+    )
+    plot_regime_transitions(
+        run.predictions,
+        OUTPUT_DIR / f"{run.mode}_regime_transitions.png",
+        title=f"Predicted macro regime over time ({run.mode})",
     )
 
 
