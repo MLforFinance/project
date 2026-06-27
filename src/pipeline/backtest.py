@@ -60,6 +60,12 @@ def _strategy_name(family: str, mode: str, l_value: int, forecast_mode: str, inc
     return f"{base}__{forecast_mode}" if include_suffix else base
 
 
+# The risk overlay is intended to reduce positive market exposure.
+# Apply it only to long-only and mixed portfolios. Long-short variants
+# already contain a short leg, so scaling both sides mostly suppresses
+# active bets rather than reducing net market beta.
+RISK_OVERLAY_MODES = {"lo", "mx"}
+
 
 def _regime_label_to_int(label: object) -> int:
     """Convert labels such as 0 or 'regime_prob_0' to integer regime ids."""
@@ -388,7 +394,17 @@ def run_walk_forward_backtest(
                 for l_value in l_values:
                     for mode in sizing_modes:
                         strategy = _strategy_name(family, mode, l_value, active_forecast_mode, include_forecast_suffix)
-                        weights = position_weights(scores, mode, l_value, regime_probs=regime_probability_sets[family]).astype(float)
+                        overlay_allowed = mode in RISK_OVERLAY_MODES
+
+                        # Cash is only part of the investable universe for modes that
+                        # can actually use the overlay. Otherwise, LNS/LOS could
+                        # accidentally select synthetic CASH as a long or short leg
+                        # simply because dynamic_overlay_enabled is true globally.
+                        mode_scores = scores
+                        if cash_enabled and not overlay_allowed and cash_ticker in mode_scores.index:
+                            mode_scores = mode_scores.drop(cash_ticker)
+
+                        weights = position_weights(mode_scores, mode, l_value, regime_probs=regime_probability_sets[family]).astype(float)
                         if cash_enabled:
                             weights = weights.reindex(asset_columns).fillna(0.0).astype(float)
 
@@ -396,7 +412,7 @@ def run_walk_forward_backtest(
                         overlay_recent_drawdown = 0.0
                         overlay_good_probability = 0.0
                         overlay_action = "no_overlay"
-                        if dynamic_overlay_enabled:
+                        if overlay_allowed and dynamic_overlay_enabled:
                             family_good_regimes = overlay_random_good_regimes if MODEL_FAMILIES[family].get("random_regimes") else overlay_good_regimes
                             overlay_exposure, overlay_recent_drawdown, overlay_good_probability, overlay_action = recent_drawdown_overlay_exposure(
                                 strategy_net_returns.get(strategy, []),
@@ -410,7 +426,7 @@ def run_walk_forward_backtest(
                                 good_probability_threshold=overlay_good_probability_threshold,
                             )
                             weights = apply_fixed_risk_overlay(weights, overlay_exposure, cash_ticker=cash_ticker)
-                        elif fixed_overlay_exposure < 1.0:
+                        elif overlay_allowed and fixed_overlay_exposure < 1.0:
                             overlay_exposure = float(fixed_overlay_exposure)
                             overlay_action = "fixed_overlay"
                             weights = apply_fixed_risk_overlay(weights, fixed_overlay_exposure, cash_ticker=cash_ticker)
