@@ -75,14 +75,22 @@ def rank_good_regimes_by_equal_weight_returns(
     regime_probabilities: pd.DataFrame,
     risky_asset_columns: list[str],
     good_regime_count: int = DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
+    sample_weights: np.ndarray | pd.Series | None = None,
 ) -> tuple[set[int], pd.Series]:
-    """Rank regimes using past equal-weight ETF returns.
+    """Rank regimes using recent-history-weighted equal-weight ETF returns.
 
     The ranking is computed inside the current expanding training window only.
     For every historical month we first compute the equal-weight average return
-    across all risky ETFs. Then, for each regime, we compute the probability-
-    weighted average of that equal-weight return. This works with soft regime
-    memberships and avoids relying on arbitrary cluster labels.
+    across all risky ETFs. Then, for each regime, we compute the weighted average
+    of that equal-weight return using:
+
+        effective_weight[t, regime] = regime_probability[t, regime] * sample_weight[t]
+
+    When sample_weights is supplied, recent months can receive more importance
+    through the same time-decay weighting philosophy used by the forecasting
+    module. If sample_weights is None, this falls back to regime-probability-
+    weighted ranking. This works with soft regime memberships and avoids relying
+    on arbitrary cluster labels.
 
     Returns
     -------
@@ -100,11 +108,18 @@ def rank_good_regimes_by_equal_weight_returns(
         raise ValueError("No risky ETF return columns are available for regime ranking.")
 
     equal_weight_market_return = aligned_returns[available_assets].astype(float).mean(axis=1)
+
+    if sample_weights is None:
+        recency_weights = pd.Series(1.0, index=equal_weight_market_return.index, dtype=float)
+    else:
+        recency_weights = pd.Series(sample_weights, index=equal_weight_market_return.index, dtype=float).fillna(0.0)
+
     regime_scores: dict[int, float] = {}
 
     for regime in regime_probabilities.columns:
         regime_id = _regime_label_to_int(regime)
-        weights = regime_probabilities[regime].astype(float).reindex(equal_weight_market_return.index).fillna(0.0)
+        regime_membership = regime_probabilities[regime].astype(float).reindex(equal_weight_market_return.index).fillna(0.0)
+        weights = regime_membership * recency_weights
         valid = equal_weight_market_return.notna() & weights.notna()
         denom = float(weights[valid].sum())
         if denom <= 0:
@@ -278,19 +293,23 @@ def run_walk_forward_backtest(
 
         # Regime-aware re-entry ranking for the dynamic overlay.
         # This is recomputed every rebalance using only the expanding-window past.
-        # Regimes are ranked by the probability-weighted equal-weight average
-        # return across all risky ETFs during that regime.
+        # Regimes are ranked by the recent-history-weighted equal-weight average
+        # return across all risky ETFs during that regime. The effective ranking
+        # weight is regime membership times the same time-decay sample weight used
+        # by the forecasting module.
         overlay_good_regimes, overlay_regime_scores = rank_good_regimes_by_equal_weight_returns(
             Y_train,
             P_train,
             risky_asset_columns,
             good_regime_count=overlay_good_regime_count,
+            sample_weights=time_weights,
         )
         overlay_random_good_regimes, overlay_random_regime_scores = rank_good_regimes_by_equal_weight_returns(
             Y_train,
             P_random_train,
             risky_asset_columns,
             good_regime_count=overlay_good_regime_count,
+            sample_weights=time_weights,
         )
 
         X_current = X_window.iloc[-1]

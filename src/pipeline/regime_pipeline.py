@@ -7,12 +7,46 @@ from pathlib import Path
 
 try:
     from ..models.Isolation import Isolation_Euclidean_KMeans
-    from ..models.modified_Kmeans import plot_kmeans_regimes
 except ImportError:  # pragma: no cover
     from models.Isolation import Isolation_Euclidean_KMeans
-    from models.modified_Kmeans import plot_kmeans_regimes
 
 
+
+
+def plot_kmeans_regimes(data, regimes, recessions=None, output_path: Path | None = None, show: bool = False, default_plot_format: str = "svg") -> None:
+    df_plot = data.copy()
+    df_plot = df_plot.iloc[len(df_plot) - len(regimes):]
+    df_plot["regime_label"] = regimes
+
+    fig, ax = plt.subplots(figsize=(15, 5))
+    unique_regimes = sorted(df_plot["regime_label"].unique())
+
+    for regime in unique_regimes:
+        mask = df_plot["regime_label"] == regime
+        ax.scatter(
+            df_plot.loc[mask].index,
+            df_plot.loc[mask, "regime_label"],
+            label=f"Regime {regime}",
+            alpha=0.3,
+        )
+
+    if recessions:
+        for start, end in recessions:
+            ax.axvspan(pd.to_datetime(start), pd.to_datetime(end), color="grey", alpha=0.3, zorder=0)
+
+    ax.set_ylabel("K-Means Regimes")
+    ax.set_xlabel("Date")
+    ax.set_yticks(unique_regimes)
+    ax.legend(loc="center left", bbox_to_anchor=(1, 0.5))
+
+    plt.tight_layout()
+    if output_path is not None:
+        output_path = Path(output_path)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        fig.savefig(output_path, format=output_path.suffix.lstrip(".") or default_plot_format, bbox_inches="tight")
+    if show:
+        plt.show()
+    plt.close(fig)
 
 
 def plot_pca_clusters(reduced_df: pd.DataFrame, regimes: pd.Series, output_path: Path | None = None, show: bool = False, default_plot_format: str = "svg") -> None:

@@ -49,10 +49,6 @@ from .config import (
 from .data_sources import align_macro_and_returns, download_etf_prices, ensure_month_start_index, prices_to_returns
 from .paths import default_data_dir, derive_backtest_paths, derive_output_paths, derive_plot_paths, discover_input_csv
 from .regime_pipeline import compute_transition_matrix, next_regime_probs, plot_kmeans_regimes, plot_pca_clusters, renormalize_probabilities
-try:
-    from ..models.modified_Kmeans import modified_KMeans
-except ImportError:  # pragma: no cover
-    from models.modified_Kmeans import modified_KMeans
 from .reporting import build_result_tables, plot_all_methods_scaled_log_returns, plot_control_vs_treatment_boxplots, plot_cumulative_returns, plot_drawdowns, plot_family_vs_benchmarks, plot_forecast_mode_comparison, plot_rolling_sharpe, plot_scaled_log_returns, select_plot_columns
 
 def run_pipeline(
