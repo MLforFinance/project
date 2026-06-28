@@ -3,6 +3,11 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+try:
+    from ..data_processing.kernel_PCA import optimal_kernel_PCA
+except ImportError:  # pragma: no cover
+    from data_processing.kernel_PCA import optimal_kernel_PCA
+
 from .analytics import build_metrics_table
 from .config import (
     DEFAULT_CASH_TICKER,
@@ -220,6 +225,12 @@ def run_walk_forward_backtest(
     overlay_hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
     overlay_good_probability_threshold: float = DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
     overlay_good_regime_count: int = DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
+    rolling_kernel_pca: bool = False,
+    kernel: str = "rbf",
+    kernel_components: int = 6,
+    gamma: float | None = None,
+    degree: int = 3,
+    coef0: float = 1.0,
 ) -> dict[str, object]:
     if len(X_full) < window_size:
         raise ValueError(f"Not enough aligned observations. Need at least {window_size} rows to start. Found {len(X_full)} rows.")
@@ -267,7 +278,24 @@ def run_walk_forward_backtest(
 
 
     for end_idx in range(window_size - 1, len(X_full)):
-        X_window = X_full.iloc[: end_idx + 1]
+        # Use data available at the rebalance date only.
+        # In the hybrid setting, X_full is the already preprocessed/imputed macro panel
+        # computed once at the beginning. Kernel PCA is then refit inside each expanding
+        # window so the reduced feature space is not learned from future macro rows.
+        X_window_raw = X_full.iloc[: end_idx + 1]
+        if rolling_kernel_pca:
+            X_window, _, _ = optimal_kernel_PCA(
+                X_window_raw,
+                kernel=kernel,
+                n_components=kernel_components,
+                gamma=gamma,
+                degree=degree,
+                coef0=coef0,
+            )
+            X_window = X_window.astype(float)
+        else:
+            X_window = X_window_raw
+
         realized_date = pd.Timestamp(target_dates[end_idx])
         realized_returns = Y_targets.iloc[end_idx].astype(float)
 

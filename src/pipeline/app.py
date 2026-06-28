@@ -138,7 +138,13 @@ def run_pipeline(
         returns_df.to_csv(backtest_paths["etf_returns"])
 
     if returns_df is not None:
-        aligned_data = align_macro_and_returns(reduced_df, returns_df)
+        # For reporting and full-sample regime plots, reduced_df is still computed once above.
+        # For the backtest, however, use the already preprocessed/imputed macro panel
+        # and refit Kernel PCA inside each expanding window. This hybrid version
+        # intentionally performs missing-value handling once, but avoids full-sample
+        # leakage in the Kernel PCA feature extraction used by the walk-forward test.
+        macro_for_backtest = processed_df if backtest else reduced_df
+        aligned_data = align_macro_and_returns(macro_for_backtest, returns_df)
 
     if backtest:
         if aligned_data is None:
@@ -163,6 +169,12 @@ def run_pipeline(
             overlay_hard_exposure=overlay_hard_exposure,
             overlay_good_probability_threshold=overlay_good_probability_threshold,
             overlay_good_regime_count=overlay_good_regime_count,
+            rolling_kernel_pca=True,
+            kernel=kernel,
+            kernel_components=kernel_components,
+            gamma=gamma,
+            degree=degree,
+            coef0=coef0,
         )
         backtest_results["portfolio_returns"].to_csv(backtest_paths["portfolio_returns"])
         backtest_results["gross_portfolio_returns"].to_csv(backtest_paths["gross_portfolio_returns"])
@@ -177,6 +189,11 @@ def run_pipeline(
         backtest_results["metrics_table"].to_csv(backtest_paths["metrics_table"], index=False)
         metrics_payload = {
             "transaction_cost_bps": backtest_results["transaction_cost_bps"],
+            "preprocessing_scope": "full_sample_once",
+            "kernel_pca_scope": "expanding_window_refit",
+            "rolling_kernel_pca": backtest_results.get("rolling_kernel_pca", False),
+            "kernel": backtest_results.get("kernel", kernel),
+            "kernel_components": backtest_results.get("kernel_components", kernel_components),
             "forecast_mode": backtest_results["forecast_mode"],
             "forecast_modes_evaluated": backtest_results["forecast_modes_evaluated"],
             "cash_ticker": backtest_results.get("cash_ticker"),
