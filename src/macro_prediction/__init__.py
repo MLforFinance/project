@@ -1,13 +1,11 @@
-"""Macroeconomic prediction experiments."""
+"""Negative-month S&P 500 risk model."""
 
-from macro_prediction.fred import FredFeatureBuilder, FredSeriesSpec, default_fredmd_representative_series
-from macro_prediction.hmm import GaussianHMMRegimeModel
+from macro_prediction.fred import FredFeatureBuilder, FredSeriesSpec, default_macro_series
 
 __all__ = [
     "FredFeatureBuilder",
     "FredSeriesSpec",
-    "GaussianHMMRegimeModel",
-    "default_fredmd_representative_series",
+    "default_macro_series",
     "__version__",
 ]
 

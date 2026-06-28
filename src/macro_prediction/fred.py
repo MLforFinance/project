@@ -252,45 +252,36 @@ def apply_transformation(series: pd.Series, transformation: Transformation) -> p
     raise ValueError(f"Unsupported transformation: {transformation}")
 
 
-def default_fredmd_representative_series() -> list[FredSeriesSpec]:
-    """A compact FRED-MD-inspired macro feature set.
-
-    This is not the full FRED-MD panel. It is a small representative basket for
-    first-pass regime modeling: activity, labor, housing, consumption, prices,
-    money/credit, and rates. Transformations are chosen to make most series more
-    stationary before standard scaling.
-    """
+def default_macro_series() -> list[FredSeriesSpec]:
+    """Simple 10-series macro basket for the negative-month model."""
 
     return [
-        # Output / income / production
-        FredSeriesSpec("RPI", transformation="log_diff", frequency="monthly"),
+        # Production / labor
         FredSeriesSpec("INDPRO", transformation="log_diff", frequency="monthly"),
-        FredSeriesSpec("CUMFNS", transformation="diff", frequency="monthly"),
-
-        # Labor market
         FredSeriesSpec("PAYEMS", transformation="log_diff", frequency="monthly"),
         FredSeriesSpec("UNRATE", transformation="diff", frequency="monthly"),
-        FredSeriesSpec("ICSA", transformation="log_diff", frequency="daily_or_weekly", monthly_aggregation="mean"),
+        FredSeriesSpec(
+            "ICSA",
+            transformation="log_diff",
+            frequency="daily_or_weekly",
+            monthly_aggregation="mean",
+        ),
 
-        # Housing
+        # Housing / consumption
         FredSeriesSpec("HOUST", transformation="log_diff", frequency="monthly"),
-        FredSeriesSpec("PERMIT", transformation="log_diff", frequency="monthly"),
-
-        # Consumption / orders
         FredSeriesSpec("RSAFS", transformation="log_diff", frequency="monthly"),
-        FredSeriesSpec("DGORDER", transformation="log_diff", frequency="monthly"),
 
-        # Prices
+        # Inflation / money
         FredSeriesSpec("CPIAUCSL", transformation="yoy_log_diff", frequency="monthly"),
-        FredSeriesSpec("PCEPI", transformation="yoy_log_diff", frequency="monthly"),
-        FredSeriesSpec("PPIACO", transformation="yoy_log_diff", frequency="monthly"),
-
-        # Money / credit
         FredSeriesSpec("M2SL", transformation="log_diff", frequency="monthly"),
-        FredSeriesSpec("BUSLOANS", transformation="log_diff", frequency="daily_or_weekly", monthly_aggregation="mean"),
 
-        # Rates / spreads
+        # Policy / yield curve
         FredSeriesSpec("FEDFUNDS", transformation="level", frequency="monthly"),
-        FredSeriesSpec("GS10", transformation="level", frequency="monthly"),
-        FredSeriesSpec("T10Y3M", transformation="level", frequency="daily_or_weekly", monthly_aggregation="mean"),
+        FredSeriesSpec(
+            "T10Y3M",
+            transformation="level",
+            frequency="daily_or_weekly",
+            monthly_aggregation="mean",
+        ),
     ]
+

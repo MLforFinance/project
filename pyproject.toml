@@ -5,18 +5,17 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "macro-prediction"
 version = "0.1.0"
-description = "A minimal macroeconomic prediction project."
+description = "Negative-month S&P 500 risk model using macro and market data."
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
     "fredapi",
-    "hmmlearn",
     "matplotlib",
     "numpy",
     "pandas",
     "scikit-learn",
+    "yfinance",
 ]
 
 [tool.setuptools.packages.find]
 where = ["src"]
-
