@@ -263,32 +263,57 @@ def plot_bad_month_probabilities(
     *,
     title: str,
 ) -> None:
-    """Plot bad-month probability through time with actual bad months marked."""
+    """Plot predicted risk together with realized S&P 500 monthly returns."""
 
-    fig, ax = plt.subplots(figsize=(14, 5))
-    ax.plot(
-        predictions.index,
-        predictions["bad_month_probability"],
+    data = predictions.dropna(subset=["bad_month_probability", "actual_sp500_return"]).copy()
+    actual_negative = data["actual_sp500_return"] < 0.0
+
+    fig, axes = plt.subplots(
+        2,
+        1,
+        figsize=(14, 7),
+        sharex=True,
+        height_ratios=[2, 1],
+    )
+    probability_ax, return_ax = axes
+
+    probability_ax.plot(
+        data.index,
+        data["bad_month_probability"],
         color="#1f77b4",
         linewidth=1.7,
-        label="Predicted bad-month probability",
+        label="Predicted negative-month probability",
     )
-    actual_bad = predictions[predictions["actual_bad_month"] == True]
-    if not actual_bad.empty:
-        ax.scatter(
-            actual_bad.index,
-            actual_bad["bad_month_probability"],
+    if actual_negative.any():
+        probability_ax.scatter(
+            data.index[actual_negative],
+            data.loc[actual_negative, "bad_month_probability"],
             color="#d62728",
             s=18,
-            label="Actual bad month",
+            label="Actual negative month",
             zorder=3,
         )
-    ax.set_title(title)
-    ax.set_xlabel("Time")
-    ax.set_ylabel("Probability")
-    ax.set_ylim(-0.02, 1.02)
-    ax.grid(True, alpha=0.3)
-    ax.legend(loc="upper left")
+    probability_ax.set_title(title)
+    probability_ax.set_ylabel("Probability")
+    probability_ax.set_ylim(-0.02, 1.02)
+    probability_ax.grid(True, alpha=0.3)
+    probability_ax.legend(loc="upper left")
+
+    colors = actual_negative.map({True: "#d62728", False: "#2ca02c"})
+    return_ax.bar(
+        data.index,
+        data["actual_sp500_return"] * 100.0,
+        width=24,
+        color=colors,
+        alpha=0.75,
+        label="Actual S&P 500 monthly return",
+    )
+    return_ax.axhline(0.0, color="#222222", linewidth=0.8)
+    return_ax.set_xlabel("Time")
+    return_ax.set_ylabel("Return (%)")
+    return_ax.grid(True, axis="y", alpha=0.3)
+    return_ax.legend(loc="lower left")
+
     fig.autofmt_xdate()
     fig.tight_layout()
     fig.savefig(output_path, dpi=150)

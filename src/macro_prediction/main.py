@@ -41,7 +41,7 @@ class ModelConfig:
     min_train_months: int = 120
     rolling_window_months: int = 120
     target_return_threshold: float = 0.0
-    include_market_features: bool = False
+    include_market_features: bool = True
 
     # Allocation rule. Bands with 33/67 probability thresholds.
     allocation_rule: str = "bands"
