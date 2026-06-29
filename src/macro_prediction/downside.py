@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import yfinance as yf
 from sklearn.linear_model import LogisticRegression
@@ -105,6 +106,99 @@ def walk_forward_bad_month_predictions(
     predictions = pd.DataFrame(rows).set_index("prediction_month")
     summary = summarize_bad_month_predictions(predictions, probability_threshold=probability_threshold)
     return BadMonthRun(mode=mode, predictions=predictions, summary=summary)
+
+
+def random_bad_month_predictions(
+    raw: pd.DataFrame,
+    sp500_returns: pd.Series,
+    *,
+    mode: str = "random",
+    bad_return_threshold: float = 0.0,
+    min_train_months: int = 120,
+    probability_threshold: float = 0.50,
+    seed: int = 42,
+    bad_month_share: float | None = None,
+) -> BadMonthRun:
+    """Randomly flag prediction months as bad using only prior bad-month rates.
+
+    If ``bad_month_share`` is provided, every month is independently flagged
+    with that fixed probability. Otherwise the probability for month T is the
+    bad-month frequency observed in training data available before T.
+    """
+
+    if not 0.0 <= probability_threshold <= 1.0:
+        raise ValueError("probability_threshold must be between 0 and 1")
+    if bad_month_share is not None and not 0.0 <= bad_month_share <= 1.0:
+        raise ValueError("bad_month_share must be between 0 and 1")
+    if len(raw) <= min_train_months:
+        raise ValueError(
+            f"Need more than {min_train_months} monthly rows for random baseline; "
+            f"got {len(raw)}."
+        )
+
+    rng = np.random.default_rng(seed)
+    historical_bad_share = make_historical_bad_month_share(
+        raw.index,
+        sp500_returns,
+        bad_return_threshold=bad_return_threshold,
+    )
+
+    rows = []
+    for train_end_position in range(min_train_months, len(raw)):
+        prediction_month = raw.index[train_end_position]
+        trained_through = raw.index[train_end_position - 1]
+        train_raw = raw.iloc[:train_end_position]
+        if bad_month_share is None:
+            draw_probability = historical_bad_share.iloc[train_end_position]
+        else:
+            draw_probability = bad_month_share
+
+        predicted_bad_month = bool(rng.random() < draw_probability)
+        probability = 1.0 if predicted_bad_month else 0.0
+        actual_return = sp500_returns.get(prediction_month, pd.NA)
+        actual_bad_month = (actual_return <= bad_return_threshold) if pd.notna(actual_return) else pd.NA
+        rows.append(
+            {
+                "prediction_month": prediction_month,
+                "trained_through": trained_through,
+                "training_months": len(train_raw),
+                "random_draw_probability": draw_probability,
+                "bad_month_probability": probability,
+                "predicted_bad_month": probability >= probability_threshold,
+                "actual_sp500_return": actual_return,
+                "actual_bad_month": actual_bad_month,
+            }
+        )
+
+    predictions = pd.DataFrame(rows).set_index("prediction_month")
+    summary = summarize_bad_month_predictions(predictions, probability_threshold=probability_threshold)
+    summary["seed"] = seed
+    if bad_month_share is not None:
+        summary["fixed_bad_month_share"] = bad_month_share
+    return BadMonthRun(mode=mode, predictions=predictions, summary=summary)
+
+
+def make_historical_bad_month_share(
+    feature_months: pd.Index,
+    sp500_returns: pd.Series,
+    *,
+    bad_return_threshold: float,
+) -> pd.Series:
+    """Return prior known bad-month share for each prediction position."""
+
+    target_months = pd.Index([next_month_end(month) for month in feature_months])
+    target_returns = sp500_returns.reindex(target_months)
+    target_returns.index = feature_months
+
+    known = target_returns.notna()
+    bad = (target_returns <= bad_return_threshold) & known
+    cumulative_known = known.astype(int).cumsum()
+    cumulative_bad = bad.astype(int).cumsum()
+
+    prior_known = cumulative_known.shift(2, fill_value=0)
+    prior_bad = cumulative_bad.shift(2, fill_value=0)
+    share = prior_bad / prior_known.replace(0, np.nan)
+    return share.fillna(0.0).astype(float)
 
 
 def fit_and_predict_bad_month_probability(
