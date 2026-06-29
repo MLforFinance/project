@@ -7,13 +7,13 @@ from sklearn.preprocessing import StandardScaler
 
 try:
     from .mrsq import mrsq
-    from .factors_em import factors_em
-    from .remove_outliers import remove_outliers
+    from .factors_em import impute_by_method, IMPUTATION_METHODS
+    from .remove_outliers import remove_outliers_by_method, OUTLIER_METHODS
     from .prepare_missing import prepare_missing, compute_NA
 except ImportError:  # pragma: no cover - supports direct script execution
     from mrsq import mrsq
-    from factors_em import factors_em
-    from remove_outliers import remove_outliers
+    from factors_em import impute_by_method, IMPUTATION_METHODS
+    from remove_outliers import remove_outliers_by_method, OUTLIER_METHODS
     from prepare_missing import prepare_missing, compute_NA
 
 
@@ -66,10 +66,13 @@ def preprocess_fred_md(
     input_path: str | Path,
     output_path: str | Path | None = None,
     trim_rows: int | None = None,
-    excluded_columns: tuple[str, ...] =(),
+    excluded_columns: tuple[str, ...] = (),
     demean: int = DEMEAN,
     jj_value: int = jj,
     kmax_value: int = kmax,
+    outlier_method: str = "global",
+    imputation_method: str = "em",
+    imputation_burn_in: int = 60,
     verbose: bool = False,
 ) -> tuple[pd.DataFrame, dict]:
     input_path = Path(input_path)
@@ -95,10 +98,17 @@ def preprocess_fred_md(
     yt = yt[burn_in_rows:, :]
 
     n_missing_after_prepare_missing = int(pd.DataFrame(yt).isna().sum().sum())
-    data, n_outliers = remove_outliers(yt)
+    data, n_outliers = remove_outliers_by_method(yt, method=outlier_method)
     n_missing_after_remove_outliers = int(pd.DataFrame(data).isna().sum().sum())
 
-    _, Fhat, lamhat, ve2, x2 = factors_em(data, kmax_value, jj_value, demean)
+    _, Fhat, lamhat, ve2, x2 = impute_by_method(
+        data,
+        method=imputation_method,
+        kmax=kmax_value,
+        jj=jj_value,
+        demean_type=demean,
+        burn_in=imputation_burn_in,
+    )
     R2, mR2, mR2_F, R2_T, t10_s, t10_mR2 = mrsq(Fhat, lamhat, ve2, series_names)
 
     if verbose:
@@ -130,6 +140,9 @@ def preprocess_fred_md(
         "n_missing_after_prepare_missing": n_missing_after_prepare_missing,
         "n_missing_after_remove_outliers": n_missing_after_remove_outliers,
         "n_outliers_total": int(n_outliers.sum()),
+        "outlier_method": outlier_method,
+        "imputation_method": imputation_method,
+        "imputation_burn_in": imputation_burn_in if imputation_method == "em_burnin" else None,
         "output_shape": scaled_data.shape,
         "variance_explained": float(R2_T),
         "mrsq": {
