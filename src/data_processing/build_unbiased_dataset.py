@@ -37,8 +37,20 @@ def read_vintage(path: Path, last_row_only: bool) -> pd.DataFrame:
     return data
 
 
-def build_unbiased_dataset(raw_data_dir: Path = RAW_DATA_DIR) -> pd.DataFrame:
+def read_transform_row(path: Path) -> pd.Series:
+    """Return the Transform row as a Series keyed by column name."""
+    df = pd.read_csv(path, header=0, nrows=1, low_memory=False)
+    date_col = df.columns[0]
+    return df.iloc[0].drop(date_col)
+
+
+def build_unbiased_dataset(raw_data_dir: Path = RAW_DATA_DIR) -> tuple[pd.DataFrame, pd.Series]:
     files = sorted(raw_data_dir.glob("*.csv"), key=lambda p: parse_vintage_date(p.name))
+
+    # Read transform codes from the base vintage; after the inner join every
+    # surviving column is guaranteed to exist in the base file, so this covers
+    # the full survivor set without any missing entries.
+    base_transform = read_transform_row(raw_data_dir / BASE_VINTAGE)
 
     chunks: list[pd.DataFrame] = []
     for path in files:
@@ -52,7 +64,11 @@ def build_unbiased_dataset(raw_data_dir: Path = RAW_DATA_DIR) -> pd.DataFrame:
     # already ensures each vintage contributes only its newest observation).
     combined = combined[~combined.index.duplicated(keep="first")]
     combined.sort_index(inplace=True)
-    return combined
+
+    # Restrict transform row to exactly the columns that survived the inner join
+    transform_row = base_transform.reindex(combined.columns)
+
+    return combined, transform_row
 
 
 def check_last_rows_present(dataset: pd.DataFrame, raw_data_dir: Path = RAW_DATA_DIR) -> None:
@@ -69,11 +85,21 @@ def check_last_rows_present(dataset: pd.DataFrame, raw_data_dir: Path = RAW_DATA
     print(f"OK — all {len(files)} vintages have their last row in the dataset")
 
 
+def save_with_transform_row(df: pd.DataFrame, transform_row: pd.Series, output_path: Path) -> None:
+    """Save the dataset with the Transform row prepended, matching FRED-MD format."""
+    transform_df = pd.DataFrame(
+        [transform_row.values],
+        columns=df.columns,
+        index=pd.Index(["Transform:"], name="sasdate"),
+    )
+    pd.concat([transform_df, df]).to_csv(output_path)
+
+
 if __name__ == "__main__":
     output_path = Path("data/macro_unbiased.csv")
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    df = build_unbiased_dataset()
-    df.to_csv(output_path)
+    df, transform_row = build_unbiased_dataset()
+    save_with_transform_row(df, transform_row, output_path)
     print(f"Saved {df.shape[0]} rows × {df.shape[1]} columns to {output_path}")
     print(f"Date range: {df.index.min()} → {df.index.max()}")
     check_last_rows_present(df)
