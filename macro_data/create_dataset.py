@@ -1,6 +1,4 @@
 """
-create_dataset.py
-
 Downloads international macroeconomic data from the ECB Data Portal and OECD
 Data Explorer and merges it with the FRED-MD dataset.
 
@@ -11,15 +9,6 @@ Sources
 * OECD KEI – Mfg. Prod.  : DSD_KEI@DF_KEI   (OECD.SDD.STES)
 * OECD Prices (CPI)       : DSD_PRICES@DF_PRICES_ALL (OECD.SDD.TPS)
 * OECD Labour – Unemp.    : DSD_LFS@DF_IALFS_INDIC   (OECD.SDD.TPS)
-
-Output
-------
-data/enriched_MD.csv — same FRED-MD layout (transform-code row + monthly obs)
-                        with ~30 additional international columns.
-
-Usage
------
-    python macro_data/create_dataset.py
 """
 from __future__ import annotations
 
@@ -31,11 +20,10 @@ from pathlib import Path
 import pandas as pd
 import requests
 
-# ── Logging ───────────────────────────────────────────────────────────────────
+
 logging.basicConfig(level=logging.INFO, format="%(levelname)s  %(message)s")
 log = logging.getLogger(__name__)
 
-# ── Paths ─────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 FRED_MD_PATH = PROJECT_ROOT / "data" / "2026-02-MD.csv"
 OUTPUT_PATH  = PROJECT_ROOT / "data" / "enriched_MD.csv"
