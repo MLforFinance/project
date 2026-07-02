@@ -8,6 +8,9 @@ import pandas as pd
 
 from .analytics import compute_drawdown, scale_to_target_vol
 
+PLOT_FAMILIES = ("naive", "mvo", "ridge")
+DEFAULT_MAX_PLOT_VARIANTS_PER_FAMILY = 6
+
 
 def _cost_label(transaction_cost_bps: float | None) -> str:
     if transaction_cost_bps is None:
@@ -31,8 +34,10 @@ def flatten_panel(panel: dict[str, pd.DataFrame]) -> pd.DataFrame:
 def select_plot_columns(metrics_table: pd.DataFrame, portfolio_returns: pd.DataFrame) -> list[str]:
     selected = [column for column in ["SPY_buy_and_hold", "equal_weight_benchmark"] if column in portfolio_returns.columns]
     treatment = metrics_table[metrics_table["control_group"] == "treatment"]
-    for family in ["naive", "black_litterman", "ridge"]:
+    for family in PLOT_FAMILIES:
         family_rows = treatment[treatment["family"] == family]
+        if family_rows.empty and family == "mvo":
+            family_rows = metrics_table[metrics_table["family"] == family]
         if not family_rows.empty:
             best_strategy = family_rows.sort_values("sharpe_annualized", ascending=False).iloc[0]["strategy"]
             selected.append(str(best_strategy))
@@ -41,6 +46,33 @@ def select_plot_columns(metrics_table: pd.DataFrame, portfolio_returns: pd.DataF
 
 def _family_columns(portfolio_returns: pd.DataFrame, family_prefix: str) -> list[str]:
     return [column for column in portfolio_returns.columns if column.startswith(f"{family_prefix}_")]
+
+
+def _top_family_columns(
+    portfolio_returns: pd.DataFrame,
+    family: str,
+    metrics_table: pd.DataFrame | None = None,
+    max_variants: int = DEFAULT_MAX_PLOT_VARIANTS_PER_FAMILY,
+) -> list[str]:
+    columns = _family_columns(portfolio_returns, family)
+    if max_variants <= 0:
+        return []
+    if not columns:
+        return []
+    if metrics_table is None or metrics_table.empty:
+        return columns[:max_variants]
+
+    ranked = (
+        metrics_table[metrics_table["family"] == family]
+        .sort_values("sharpe_annualized", ascending=False)["strategy"]
+        .astype(str)
+        .tolist()
+    )
+    selected = [strategy for strategy in ranked if strategy in columns]
+    for column in columns:
+        if column not in selected:
+            selected.append(column)
+    return selected[:max_variants]
 
 
 def _base_strategy_name(strategy: str) -> str:
@@ -117,6 +149,8 @@ def plot_scaled_log_returns(
 def plot_all_methods_scaled_log_returns(
     portfolio_returns: pd.DataFrame,
     output_path: Path,
+    metrics_table: pd.DataFrame | None = None,
+    max_variants_per_family: int = DEFAULT_MAX_PLOT_VARIANTS_PER_FAMILY,
     show: bool = False,
     transaction_cost_bps: float | None = None,
 ) -> None:
@@ -127,7 +161,6 @@ def plot_all_methods_scaled_log_returns(
         "ridge": ("yellow", 1.2, 0.95),
         "naive": ("red", 1.2, 0.35),
         "mvo": ("blue", 1.2, 0.35),
-        "black_litterman": ("green", 1.2, 0.35),
     }
     benchmark_styles = {
         "equal_weight_benchmark": ("magenta", 1.8, 1.0, "EW"),
@@ -136,7 +169,7 @@ def plot_all_methods_scaled_log_returns(
 
     fig, ax = plt.subplots(figsize=(13, 7))
     for family, (color, linewidth, alpha) in family_styles.items():
-        columns = _family_columns(cumulative_log, family)
+        columns = _top_family_columns(cumulative_log, family, metrics_table, max_variants_per_family)
         for idx, column in enumerate(columns):
             label = family.replace("_", "-").title() if idx == 0 else None
             ax.plot(cumulative_log.index, cumulative_log[column], color=color, linewidth=linewidth, alpha=alpha, label=label)
@@ -161,6 +194,8 @@ def plot_family_vs_benchmarks(
     portfolio_returns: pd.DataFrame,
     family: str,
     output_path: Path,
+    metrics_table: pd.DataFrame | None = None,
+    max_family_variants: int = DEFAULT_MAX_PLOT_VARIANTS_PER_FAMILY,
     show: bool = False,
     transaction_cost_bps: float | None = None,
 ) -> None:
@@ -170,7 +205,6 @@ def plot_family_vs_benchmarks(
     family_colors = {
         "naive": "blue",
         "mvo": "red",
-        "black_litterman": "orchid",
         "ridge": "gold",
     }
     benchmark_styles = {
@@ -183,7 +217,7 @@ def plot_family_vs_benchmarks(
         if column in cumulative_log.columns:
             ax.plot(cumulative_log.index, cumulative_log[column], color=color, linewidth=1.8, label=label)
 
-    family_columns = _family_columns(cumulative_log, family)
+    family_columns = _top_family_columns(cumulative_log, family, metrics_table, max_family_variants)
     family_label = family.replace("_", "-").title()
     family_color = family_colors[family]
     for idx, column in enumerate(family_columns):
@@ -197,7 +231,7 @@ def plot_family_vs_benchmarks(
         )
 
     if family != "mvo":
-        for idx, column in enumerate(_family_columns(cumulative_log, "mvo")):
+        for idx, column in enumerate(_top_family_columns(cumulative_log, "mvo", metrics_table, max_family_variants)):
             ax.plot(
                 cumulative_log.index,
                 cumulative_log[column],
@@ -261,7 +295,6 @@ def plot_control_vs_treatment_boxplots(
 ) -> None:
     comparisons = [
         ("naive_vs_random", "Naive", "Random"),
-        ("bl_vs_mvo", "Black-Litterman", "MVO"),
         ("ridge_vs_random", "Ridge", "Random"),
     ]
     metrics = [
@@ -331,6 +364,6 @@ def plot_forecast_mode_comparison(
 def build_result_tables(metrics_table: pd.DataFrame) -> dict[str, pd.DataFrame]:
     return {
         "naive_result_table": metrics_table[metrics_table["family"].isin(["naive", "naive_random"])].copy(),
-        "bl_mvo_result_table": metrics_table[metrics_table["family"].isin(["black_litterman", "mvo"])].copy(),
+        "mvo_result_table": metrics_table[metrics_table["family"] == "mvo"].copy(),
         "ridge_result_table": metrics_table[metrics_table["family"].isin(["ridge", "ridge_random"])].copy(),
     }
