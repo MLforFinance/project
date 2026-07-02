@@ -88,23 +88,16 @@ def factors_em(x, kmax, jj, demean_type, verbose=True):
 # ---------------------------------------------------------------------------
 
 def _locf_fill(x):
-    """Forward-fill NaNs column by column; backfill any leading NaNs with first valid value."""
+    """Forward-fill NaNs column by column without using future observations."""
     T, N = x.shape
     result = x.copy()
     for j in range(N):
-        col = result[:, j]
-        # forward pass
-        for t in range(1, T):
-            if np.isnan(col[t]):
-                col[t] = col[t - 1]
-        # backward pass for leading NaNs
-        first_valid = next((col[t] for t in range(T) if not np.isnan(col[t])), 0.0)
+        last_valid = 0.0
         for t in range(T):
-            if np.isnan(col[t]):
-                col[t] = first_valid
+            if np.isnan(result[t, j]):
+                result[t, j] = last_valid
             else:
-                break
-        result[:, j] = col
+                last_valid = result[t, j]
     return result
 
 
