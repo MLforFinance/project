@@ -152,11 +152,9 @@ def run_pipeline(
 
     if returns_df is not None:
         # For reporting and full-sample regime plots, reduced_df is still computed once above.
-        # For the backtest, however, use the already preprocessed/imputed macro panel
-        # and refit Kernel PCA inside each expanding window. This hybrid version
-        # intentionally performs missing-value handling once, but avoids full-sample
-        # leakage in the Kernel PCA feature extraction used by the walk-forward test.
-        macro_for_backtest = processed_df if backtest else reduced_df
+        # For the backtest, use the unscaled transformed macro panel and fit any
+        # standardization/Kernel PCA only inside each expanding walk-forward window.
+        macro_for_backtest = preprocessing_info["transformed_data"] if backtest else reduced_df
         aligned_data = align_macro_and_returns(macro_for_backtest, returns_df)
 
     if backtest:
@@ -202,7 +200,8 @@ def run_pipeline(
         backtest_results["metrics_table"].to_csv(backtest_paths["metrics_table"], index=False)
         metrics_payload = {
             "transaction_cost_bps": backtest_results["transaction_cost_bps"],
-            "preprocessing_scope": "full_sample_once",
+            "preprocessing_scope": "point_in_time_outliers_and_locf_imputation",
+            "standardization_scope": "expanding_window_refit",
             "kernel_pca_scope": "expanding_window_refit",
             "rolling_kernel_pca": backtest_results.get("rolling_kernel_pca", False),
             "kernel": backtest_results.get("kernel", kernel),
@@ -220,7 +219,7 @@ def run_pipeline(
 
         result_tables = build_result_tables(backtest_results["metrics_table"])
         result_tables["naive_result_table"].to_csv(backtest_paths["naive_result_table"], index=False)
-        result_tables["bl_mvo_result_table"].to_csv(backtest_paths["bl_mvo_result_table"], index=False)
+        result_tables["mvo_result_table"].to_csv(backtest_paths["mvo_result_table"], index=False)
         result_tables["ridge_result_table"].to_csv(backtest_paths["ridge_result_table"], index=False)
 
         if plot:
@@ -228,11 +227,10 @@ def run_pipeline(
             plot_cumulative_returns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["cumulative_returns"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
             plot_drawdowns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["drawdown"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
             plot_scaled_log_returns(backtest_results["portfolio_returns"][selected_columns], backtest_paths["scaled_log_returns"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
-            plot_all_methods_scaled_log_returns(backtest_results["portfolio_returns"], backtest_paths["all_methods_scaled_log_returns"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "naive", backtest_paths["naive_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "mvo", backtest_paths["mvo_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "black_litterman", backtest_paths["black_litterman_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
-            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "ridge", backtest_paths["ridge_vs_benchmarks"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_all_methods_scaled_log_returns(backtest_results["portfolio_returns"], backtest_paths["all_methods_scaled_log_returns"], metrics_table=backtest_results["metrics_table"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "naive", backtest_paths["naive_vs_benchmarks"], metrics_table=backtest_results["metrics_table"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "mvo", backtest_paths["mvo_vs_benchmarks"], metrics_table=backtest_results["metrics_table"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
+            plot_family_vs_benchmarks(backtest_results["portfolio_returns"], "ridge", backtest_paths["ridge_vs_benchmarks"], metrics_table=backtest_results["metrics_table"], show=show_plots, transaction_cost_bps=transaction_cost_bps)
             if selected_columns:
                 primary_strategy = selected_columns[0] if selected_columns[0] not in {"SPY_buy_and_hold", "equal_weight_benchmark"} else (selected_columns[2] if len(selected_columns) > 2 else selected_columns[0])
                 plot_rolling_sharpe(backtest_results["portfolio_returns"][primary_strategy], backtest_paths["rolling_sharpe_monthly"], annualized=False, show=show_plots, strategy_name=primary_strategy, transaction_cost_bps=transaction_cost_bps)

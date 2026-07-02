@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from sklearn.preprocessing import StandardScaler
 
 from .analytics import build_metrics_table
 from .config import (
@@ -10,6 +11,11 @@ from .config import (
     DEFAULT_ENABLE_DYNAMIC_RISK_OVERLAY,
     DEFAULT_FIXED_OVERLAY_EXPOSURE,
     DEFAULT_FORECAST_MODE,
+    DEFAULT_GAMMA,
+    DEFAULT_KERNEL,
+    DEFAULT_KERNEL_COMPONENTS,
+    DEFAULT_DEGREE,
+    DEFAULT_COEF0,
     DEFAULT_L_VALUES,
     DEFAULT_OVERLAY_HARD_DRAWDOWN,
     DEFAULT_OVERLAY_HARD_EXPOSURE,
@@ -25,7 +31,6 @@ from .config import (
 )
 from .forecasting import (
     compute_random_regime_state,
-    forecast_black_litterman_scores,
     forecast_mvo_scores,
     forecast_naive_sharpe,
     predict_ridge,
@@ -34,6 +39,7 @@ from .forecasting import (
 )
 from .portfolio import add_cash_asset, apply_fixed_risk_overlay, evolve_weights, position_weights, standardize_scores, traded_notional, transaction_cost
 from .regime_pipeline import compute_transition_matrix, compute_window_regime_state, next_regime_probs, renormalize_probabilities
+from ..data_processing.kernel_PCA import optimal_kernel_PCA
 from .reporting import flatten_panel
 
 
@@ -220,6 +226,12 @@ def run_walk_forward_backtest(
     overlay_hard_exposure: float = DEFAULT_OVERLAY_HARD_EXPOSURE,
     overlay_good_probability_threshold: float = DEFAULT_OVERLAY_GOOD_PROBABILITY_THRESHOLD,
     overlay_good_regime_count: int = DEFAULT_OVERLAY_GOOD_REGIME_COUNT,
+    rolling_kernel_pca: bool = False,
+    kernel: str = DEFAULT_KERNEL,
+    kernel_components: int = DEFAULT_KERNEL_COMPONENTS,
+    gamma: float | None = DEFAULT_GAMMA,
+    degree: int = DEFAULT_DEGREE,
+    coef0: float = DEFAULT_COEF0,
 ) -> dict[str, object]:
     if len(X_full) < window_size:
         raise ValueError(f"Not enough aligned observations. Need at least {window_size} rows to start. Found {len(X_full)} rows.")
@@ -271,7 +283,28 @@ def run_walk_forward_backtest(
         realized_date = pd.Timestamp(target_dates[end_idx])
         realized_returns = Y_targets.iloc[end_idx].astype(float)
 
-        regime_state = compute_window_regime_state(X_window, regime_count=regime_count)
+        scaler = StandardScaler()
+        X_standardized_window = pd.DataFrame(
+            scaler.fit_transform(X_window),
+            index=X_window.index,
+            columns=X_window.columns,
+        )
+        X_standardized_window.index.name = X_window.index.name
+
+        if rolling_kernel_pca:
+            n_components = max(1, min(int(kernel_components), len(X_standardized_window)))
+            X_feature_window, _, _ = optimal_kernel_PCA(
+                X_standardized_window,
+                kernel=kernel,
+                n_components=n_components,
+                gamma=gamma,
+                degree=degree,
+                coef0=coef0,
+            )
+        else:
+            X_feature_window = X_standardized_window
+
+        regime_state = compute_window_regime_state(X_feature_window, regime_count=regime_count)
         R_window = regime_state["regimes"]
         P_window = regime_state["probabilities"]
         # Use soft regime probabilities for expected transition counts.
@@ -284,7 +317,7 @@ def run_walk_forward_backtest(
         E_random = compute_transition_matrix(random_regimes, n_regimes)
         p_next_random = next_regime_probs(random_probs.iloc[-1].to_numpy(), E_random.to_numpy())
 
-        X_train = X_window.iloc[:-1]
+        X_train = X_feature_window.iloc[:-1]
         Y_train = Y_targets.loc[X_train.index]
 
         half_life = 48  # months, tune this
@@ -318,7 +351,7 @@ def run_walk_forward_backtest(
             sample_weights=time_weights,
         )
 
-        X_current = X_window.iloc[-1]
+        X_current = X_feature_window.iloc[-1]
         ridge_models = train_ridge_models(X_train, Y_train, R_train, n_regimes, alpha=ridge_alpha, sample_weights=time_weights)
         ridge_random_models = train_ridge_models(X_train, Y_train, R_random_train, n_regimes, alpha=ridge_alpha, sample_weights=time_weights)
 
@@ -347,17 +380,6 @@ def run_walk_forward_backtest(
                     ),
                     Y_targets.columns,
                 ),
-                "black_litterman": standardize_scores(
-                    forecast_black_litterman_scores(
-                        Y_train,
-                        R_train,
-                        p_next,
-                        forecast_mode=active_forecast_mode,
-                        sample_weights=time_weights,
-                        regime_probabilities=P_train,
-                    ),
-                    Y_targets.columns,
-                ),
                 "mvo": standardize_scores(
                     forecast_mvo_scores(
                         Y_train,
@@ -381,7 +403,6 @@ def run_walk_forward_backtest(
             regime_probability_sets = {
                 "naive": pd.Series(regime_weights(p_next, active_forecast_mode), index=range(n_regimes), dtype=float),
                 "naive_random": pd.Series(regime_weights(p_next_random, active_forecast_mode), index=range(n_regimes), dtype=float),
-                "black_litterman": pd.Series(regime_weights(p_next, active_forecast_mode), index=range(n_regimes), dtype=float),
                 "mvo": pd.Series(regime_weights(p_next, active_forecast_mode), index=range(n_regimes), dtype=float),
                 "ridge": pd.Series(regime_weights(p_next, active_forecast_mode), index=range(n_regimes), dtype=float),
                 "ridge_random": pd.Series(regime_weights(p_next_random, active_forecast_mode), index=range(n_regimes), dtype=float),
@@ -527,6 +548,10 @@ def run_walk_forward_backtest(
         "transaction_cost_bps": float(transaction_cost_bps),
         "forecast_mode": forecast_mode,
         "forecast_modes_evaluated": list(forecast_modes),
+        "rolling_standardization": True,
+        "rolling_kernel_pca": bool(rolling_kernel_pca),
+        "kernel": kernel,
+        "kernel_components": int(kernel_components),
         "cash_ticker": cash_ticker if cash_enabled else None,
         "fixed_overlay_exposure": float(fixed_overlay_exposure),
         "dynamic_risk_overlay_enabled": dynamic_overlay_enabled,
