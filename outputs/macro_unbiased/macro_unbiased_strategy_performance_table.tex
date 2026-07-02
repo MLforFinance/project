@@ -1,0 +1,16 @@
+\begin{table}[htbp]
+\centering
+\caption{Risk-adjusted performance summary for the strategies shown in Figure~\ref{fig:cumulative_returns}. Returns are net of 5 basis points transaction costs; Sharpe and Sortino ratios are annualized.}
+\label{tab:strategy_performance}
+\begin{tabular}{lrrr}
+\toprule
+Strategy & Sharpe & Sortino & Max DD \\
+\midrule
+SPY buy-and-hold & 0.82 & 1.27 & -50.78\% \\
+Equal-weight benchmark & 0.83 & 1.27 & -49.31\% \\
+Naive, LO, $l=7$ & 0.91 & 1.47 & -30.07\% \\
+MVO, LO, $l=2$ & 1.02 & 1.75 & -27.90\% \\
+Ridge, LO, $l=9$ & 1.00 & 1.74 & -20.95\% \\
+\bottomrule
+\end{tabular}
+\end{table}
