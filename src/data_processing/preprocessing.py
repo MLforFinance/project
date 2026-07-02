@@ -134,6 +134,7 @@ def preprocess_fred_md(
 
     preprocessing_info = {
         "input_path": input_path,
+        "transformed_data": transformed_df,
         "output_path": Path(output_path) if output_path is not None else None,
         "burn_in_rows": burn_in_rows,
         "excluded_columns": excluded_present,
