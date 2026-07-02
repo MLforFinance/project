@@ -30,7 +30,7 @@ def discover_input_csv(data_dir: Path) -> Path:
         "_predictions",
         "_strategy_metrics",
         "_naive_result_table",
-        "_bl_mvo_result_table",
+        "_mvo_result_table",
         "_ridge_result_table",
     )
     candidates = sorted(path for path in data_dir.glob("*.csv") if not path.stem.endswith(excluded_suffixes))
@@ -75,7 +75,7 @@ def derive_backtest_paths(input_csv: Path, output_dir: Path) -> dict[str, Path]:
         "metrics": output_dir / f"{stem}_metrics.json",
         "metrics_table": output_dir / f"{stem}_strategy_metrics.csv",
         "naive_result_table": output_dir / f"{stem}_naive_result_table.csv",
-        "bl_mvo_result_table": output_dir / f"{stem}_bl_mvo_result_table.csv",
+        "mvo_result_table": output_dir / f"{stem}_mvo_result_table.csv",
         "ridge_result_table": output_dir / f"{stem}_ridge_result_table.csv",
         "cumulative_returns": output_dir / f"{stem}_cumulative_returns.png",
         "drawdown": output_dir / f"{stem}_drawdown.png",
@@ -85,7 +85,6 @@ def derive_backtest_paths(input_csv: Path, output_dir: Path) -> dict[str, Path]:
         "all_methods_scaled_log_returns": output_dir / f"{stem}_all_methods_scaled_log_returns.png",
         "naive_vs_benchmarks": output_dir / f"{stem}_naive_vs_benchmarks.png",
         "mvo_vs_benchmarks": output_dir / f"{stem}_mvo_vs_benchmarks.png",
-        "black_litterman_vs_benchmarks": output_dir / f"{stem}_black_litterman_vs_benchmarks.png",
         "ridge_vs_benchmarks": output_dir / f"{stem}_ridge_vs_benchmarks.png",
         "boxplots": output_dir / f"{stem}_control_vs_treatment_boxplots.png",
         "forecast_mode_comparison": output_dir / f"{stem}_forecast_mode_comparison.png",
